@@ -1,0 +1,15 @@
+# Игнорировать Google credentials
+credentials.json
+
+# Кэш и временные файлы Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# IDE файлы
+.vscode/
+.idea/
+
+# MacOS
+.DS_Store
