@@ -258,12 +258,16 @@ def break_requested(text):
 
 @bot.message_handler(func=lambda m: m.text and break_requested(m.text))
 def handle_break_request(message):
+    # Не реагировать на пересланные сообщения!
+    if getattr(message, "forward_from", None) or getattr(message, "forward_from_chat", None):
+        return
+
     chat_id = message.chat.id
     user_id = message.from_user.id
     username = get_username(message)
 
     if chat_id not in chat_data or chat_data[chat_id].get('main_id') != user_id:
-        bot.reply_to(message, "⛔ Перерыв можно брать только главному на смене, товарищ!")
+        bot.reply_to(message, "⛔ Перерыв можно брать только главному на смене! 🦻")
         return
 
     user = chat_data[chat_id]['users'][user_id]
