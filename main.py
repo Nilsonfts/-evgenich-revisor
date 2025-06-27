@@ -38,17 +38,29 @@ soviet_phrases = {
         "🎤 Где твой голос, ведущий?! 🤔",
         "🛎️ Голос — это сигнал. Подай его! 🛎️",
     ],
+    "scary_reminder": [
+        "😈 Я знаю, где ты живёшь... Не заставляй меня приходить лично! 👀",
+        "👹 Ку-ку! Ты ещё жив? Эфир ждёт! Не прячься!",
+        "🕷️ Осторожно, паутина тишины затягивает эфир... Срочно голосовое!",
+        "🧟‍♂️ Так, если не появишься, ночью тебе приснится эфир!",
+        "👾 Я уже рядом... и знаю, что ты не работаешь!",
+        "🦉 Я слежу за тобой! Один шаг — и эфир оживёт!",
+        "💀 Если не запишешь голосовое, я расскажу начальству твой секрет!",
+        "👻 Бууу! Исчезнувших ведущих мы находим быстро. Эфир ждет тебя!",
+        "🔪 Не доводи до крайностей! Голосовое — немедленно!",
+        "🧙‍♂️ Проклятие молчаливого ведущего уже нависло! Спаси эфир!",
+    ],
     "break_acknowledgement": [
-        "☕ Хорошо, даю перерыв! Жду обратно в строю! 💪",
-        "😎 Принято, отдыхай. Но не затягивай! ⏳",
-        "🍔 Конечно, товарищ. Приятного аппетита! 👍",
-        "🕰️ Давай, но чтоб через 15 минут был как штык! 🚀",
-        "🥗 Перерыв одобрен! Главное — вернуться! 🏃‍♂️",
-        "🍵 Чай попей, но про эфир не забудь! 📻",
-        "🧁 Перерыв — дело святое, возвращайся бодрым! 😁",
-        "🥨 Кофе-пауза включена, не расслабляйся! ☄️",
-        "🍫 Сладкий момент, но не задерживайся! ⌛",
-        "🍉 Отдыхай, но эфир всегда на первом месте! 🏆",
+        "☕ Хорошо, {username}, перерыв засчитан! Жду обратно в строю!",
+        "😎 Принято, {username}, отдыхай. Но не затягивай!",
+        "🍔 Конечно, {username}, приятного аппетита!",
+        "🕰️ Давай, {username}, но чтобы через 15 минут был как штык!",
+        "🥗 Перерыв одобрен, {username}! Главное — вернуться!",
+        "🍵 {username}, чай попей, но про эфир не забудь!",
+        "🧁 Перерыв — дело святое, возвращайся бодрым, {username}!",
+        "🥨 Кофе-пауза включена, {username}, не расслабляйся!",
+        "🍫 Сладкий момент, но не задерживайся, {username}!",
+        "🍉 Отдыхай, {username}, но эфир всегда на первом месте!",
     ],
     "break_over_reminder": [
         "⏰ Так, перерыв окончен! Где ты, герой эфира? 🦸‍♂️",
@@ -161,6 +173,12 @@ welcome_phrases = [
     "👨‍🔧 Ведущий, я на страже! Считаю твои голосовые! 📈",
 ]
 
+# --- Ключевые слова для перерыва ---
+BREAK_KEYWORDS = [
+    "перерыв", "перекур", "покурить", "я на перерыв", "я на обед", "обед", "я кушать",
+    "кушать", "ем", "есть", "отдохнуть", "пить", "кофе", "чай", "отойти", "отойду"
+]
+
 # --- Хранилище данных ---
 chat_data = {}
 
@@ -200,11 +218,9 @@ def handle_voice_message(message):
 
     # --- НЕ ЗАСЧИТЫВАЕМ КОРОТКИЕ ГОЛОСОВЫЕ (<7 сек) ---
     if voice_duration < 7:
-        # Если это главный — ругаемся!
         if chat_data[chat_id]['main_id'] == user_id:
             phrase = random.choice(soviet_phrases["too_short"]).format(username=username, seconds=voice_duration)
             bot.send_message(chat_id, phrase)
-        # Просто игнорируем для всех (ниже ничего не делаем)
         return
 
     user['count'] += 1
@@ -216,6 +232,7 @@ def handle_voice_message(message):
         chat_data[chat_id]['main_id'] = user_id
         chat_data[chat_id]['main_username'] = username
         chat_data[chat_id]['shift_start'] = now
+        users[user_id]['last_voice_time'] = now  # Фикс: ставим время для отсчёта бездействия сразу при назначении!
         text = random.choice(soviet_phrases["main_accepted"]).format(username=username)
         bot.send_message(chat_id, text)
     elif chat_data[chat_id]['main_id'] == user_id and user['count'] > 1:
@@ -235,22 +252,30 @@ def handle_voice_message(message):
 
     logging.info(f"🎧 Голосовое от {username} в чате {chat_id}. Всего: {users[user_id]['count']}")
 
-@bot.message_handler(func=lambda m: m.text and any(word in m.text.lower() for word in ["курить", "перерыв", "есть", "пить", "отойду"]))
+def break_requested(text):
+    lowered = text.lower()
+    return any(word in lowered for word in BREAK_KEYWORDS)
+
+@bot.message_handler(func=lambda m: m.text and break_requested(m.text))
 def handle_break_request(message):
     chat_id = message.chat.id
     user_id = message.from_user.id
     username = get_username(message)
 
     if chat_id not in chat_data or chat_data[chat_id].get('main_id') != user_id:
-        bot.reply_to(message, "⛔ Перерыв можно брать только главному на смене! 🫡")
+        bot.reply_to(message, "⛔ Перерыв можно брать только главному на смене, товарищ!")
         return
 
     user = chat_data[chat_id]['users'][user_id]
     user['breaks_count'] += 1
     user['on_break'] = True
     user['break_start_time'] = datetime.datetime.now(moscow_tz)
-    ack = random.choice(soviet_phrases["break_acknowledgement"])
+    ack = random.choice(soviet_phrases["break_acknowledgement"]).format(username=username)
     bot.reply_to(message, ack)
+
+@bot.message_handler(commands=["obed"])
+def obed_command(message):
+    handle_break_request(message)
 
 @bot.message_handler(commands=["restart"])
 def restart_main(message):
@@ -283,7 +308,15 @@ def karaoke_assign(message):
         return
     chat_data[chat_id]['main_id'] = uid
     chat_data[chat_id]['main_username'] = userinfo['username']
+    users[uid]['last_voice_time'] = datetime.datetime.now(moscow_tz)  # Фикс: сброс отсчёта при назначении нового главного!
     bot.send_message(chat_id, f"🎤 Теперь товарищ {userinfo['username']} — главный на смене! 🫡")
+
+def get_reminder_phrase():
+    # 80% обычные, 20% устрашающие
+    if random.random() < 0.2:
+        return random.choice(soviet_phrases["scary_reminder"])
+    else:
+        return random.choice(soviet_phrases["voice_reminder"])
 
 def check_users_activity():
     for chat_id, data in chat_data.items():
@@ -299,10 +332,10 @@ def check_users_activity():
         # Проверка перерыва
         if user.get('on_break'):
             minutes_on_break = (now - user['break_start_time']).total_seconds() / 60
-            if minutes_on_break > BREAK_DURATION_MINUTES:
+            if minutes_on_break > BREAK_DURATION_MINUTES and not user.get('reminded'):
                 try:
                     phrase = random.choice(soviet_phrases["pain_joke"])
-                    bot.send_message(main_id, phrase)
+                    bot.send_message(chat_id, phrase)
                     user['reminded'] = True
                 except Exception as e:
                     logging.error(f"Не удалось отправить напоминание о конце перерыва: {e}")
@@ -313,8 +346,8 @@ def check_users_activity():
             minutes_passed = (now - user['last_voice_time']).total_seconds() / 60
             if minutes_passed > VOICE_TIMEOUT_MINUTES and not user.get('reminded'):
                 try:
-                    phrase = random.choice(soviet_phrases["voice_reminder"])
-                    bot.send_message(main_id, phrase)
+                    phrase = get_reminder_phrase()
+                    bot.send_message(chat_id, phrase)
                     user['reminded'] = True
                 except Exception as e:
                     logging.error(f"Не удалось отправить напоминание: {e}")
@@ -323,6 +356,38 @@ def check_users_activity():
 def send_welcome(message):
     welcome_message = random.choice(welcome_phrases)
     bot.reply_to(message, welcome_message)
+
+@bot.message_handler(commands=["отчет", "otchet"])
+def send_interim_report(message):
+    chat_id = message.chat.id
+    if chat_id not in chat_data:
+        bot.send_message(chat_id, "Нет данных по смене в этом чате.")
+        return
+
+    data = chat_data[chat_id]
+    main_id = data.get('main_id')
+    users = data.get('users', {})
+    main_user = users.get(main_id)
+
+    if not main_user:
+        bot.send_message(chat_id, "Главный ведущий ещё не назначен.")
+        return
+
+    breaks_count = main_user.get('breaks_count', 0)
+    late_returns = main_user.get('late_returns', 0)
+    said_count = main_user.get('count', 0)
+    perc = round(said_count / EXPECTED_VOICES_PER_SHIFT * 100)
+    username = main_user.get('username', 'Неизвестно')
+
+    report_lines = [
+        f"📋 #Промежуточный_отчет ({data['shift_start'].strftime('%d.%m.%Y')})",
+        f"🎤 Ведущий: {username}",
+        f"🗣️ Голосовых: {said_count} из {EXPECTED_VOICES_PER_SHIFT} ({perc}%)",
+        f"☕ Перерывов: {breaks_count}",
+        f"⏳ Задержек после перерыва: {late_returns}",
+    ]
+
+    bot.send_message(chat_id, "\n".join(report_lines))
 
 def send_end_of_shift_reports():
     now = datetime.datetime.now(moscow_tz)
