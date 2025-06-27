@@ -2,27 +2,18 @@ import logging
 import os
 import telebot
 import datetime
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-from telebot import types
-import json
-import pytz  # Библиотека для работы с часовыми поясами, ее нужно установить
+import pytz  # Библиотека для работы с часовыми поясами
 
-# --- Настройки и авторизация ---
+# --- Настройки ---
 logging.basicConfig(level=logging.INFO)
 
+# Теперь нам нужна только одна переменная окружения
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds_dict = json.loads(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
-creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-client = gspread.authorize(creds)
-sheet = client.open_by_key(SPREADSHEET_ID).sheet1
-
+# --- Инициализация бота ---
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# --- ВАШ СЛОВАРЬ С ФРАЗАМИ (ТЕПЕРЬ ПОЛНОСТЬЮ) ---
+# --- ВАШ СЛОВАРЬ С ФРАЗАМИ (ПОЛНОСТЬЮ) ---
 soviet_phrases = {
     "check_in": [
         "📻 На смене! Готов вещать в эфир, как по ГОСТу!",
@@ -122,6 +113,8 @@ voice_counts = {}
 def handle_voice_message(message):
     user_id = message.from_user.id
     username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
+
+    # Увеличиваем счетчик для этого пользователя
     current_count = voice_counts.get(user_id, 0) + 1
     voice_counts[user_id] = current_count
     logging.info(f"Засчитано голосовое сообщение от {username}. Текущий счет: {current_count}")
@@ -129,7 +122,7 @@ def handle_voice_message(message):
 # --- Основные команды бота ---
 @bot.message_handler(commands=["start", "help"])
 def send_welcome(message):
-    bot.reply_to(message, "Салам, ведущий! Я буду автоматически считать твои голосовые сообщения. Когда понадобится, используй команду /отчет.")
+    bot.reply_to(message, "Салам, ведущий! Я буду автоматически считать твои голосовые сообщения. Когда понадобится, используй команду /отчет, чтобы получить итог смены прямо здесь.")
 
 @bot.message_handler(commands=["отчет"])
 def handle_report(message):
@@ -137,17 +130,34 @@ def handle_report(message):
         user_id = message.from_user.id
         user = message.from_user
         username = f"@{user.username}" if user.username else user.first_name
+
+        # Получаем количество посчитанных голосовых.
         facts = voice_counts.get(user_id, 0)
-        could_be = ""  # Оставляем это поле пустым, как и договаривались
+
+        # Устанавливаем московский часовой пояс и форматируем дату и время
         moscow_tz = pytz.timezone("Europe/Moscow")
-        now = datetime.datetime.now(moscow_tz).strftime("%d.%m.%Y")
+        now = datetime.datetime.now(moscow_tz).strftime("%d.%m.%Y в %H:%M:%S")
+
+        # Выбираем фразу для отчета
         phrase = soviet_phrases["report"][hash(user_id) % len(soviet_phrases["report"])]
-        row = [f"#{now}", username, str(facts), could_be, phrase]
-        sheet.append_row(row)
-        logging.info(f"Добавлен отчет: {row}")
-        bot.reply_to(message, f"{phrase}\nЗаписано в журнал **{facts}** голосовых за {now}.")
+
+        # Формируем текст отчета для отправки в чат
+        report_text = (
+            f"{phrase}\n\n"
+            f"📝 **Отчет о смене за {now} (МСК)** 📝\n\n"
+            f"**Товарищ:** {username}\n"
+            f"**Выполнено (голосовых):** {facts}\n\n"
+            f"Счетчик сброшен. Можно начинать новую смену!"
+        )
+
+        # Отправляем отчет прямо в чат с Markdown-форматированием
+        bot.reply_to(message, report_text, parse_mode="Markdown")
+        logging.info(f"Сформирован отчет для {username}: {facts} голосовых.")
+
+        # Обнуляем счетчик для этого пользователя после успешного отчета
         voice_counts[user_id] = 0
         logging.info(f"Счетчик для {username} сброшен.")
+
     except Exception as e:
         logging.error(f"Ошибка при создании отчета: {e}")
         bot.reply_to(message, "Товарищ, при создании отчета произошла непредвиденная ошибка!")
