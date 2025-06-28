@@ -203,6 +203,9 @@ def get_user_by_username(users_dict, username):
 def handle_voice_message(message):
     if message.chat.id == ADMIN_CHAT_ID:
         return
+    # Игнорировать пересланные голосовые
+    if getattr(message, "forward_from", None) or getattr(message, "forward_from_chat", None):
+        return
     chat_id = message.chat.id
     user_id = message.from_user.id
     username = get_username(message)
@@ -322,7 +325,7 @@ def karaoke_assign(message):
         return
     chat_data[chat_id]['main_id'] = uid
     chat_data[chat_id]['main_username'] = userinfo['username']
-    users[uid]['last_voice_time'] = datetime.datetime.now(moscow_tz)  # Фикс: сброс отсчёта при назначении нового главного!
+    users[uid]['last_voice_time'] = datetime.datetime.now(moscow_tz)
     bot.send_message(chat_id, f"🎤 Теперь товарищ {userinfo['username']} — главный на смене! 🫡")
 
 def get_reminder_phrase():
@@ -455,7 +458,7 @@ def send_end_of_shift_reports():
             "date": data['shift_start'].strftime("%d.%m.%Y"),
             "report": final_report
         })
-    chat_data.clear()
+    # chat_data.clear()  # не очищаем для сохранения данных до автоматического отчета
 
 def get_official_conclusion(perc, late_returns):
     if perc >= 100:
@@ -516,14 +519,46 @@ def send_admin_summary():
 
 @bot.message_handler(commands=["отчет", "otchet"])
 def send_manual_admin_report(message):
-    # Можно вызвать в любом чате: отчёт уйдёт и в чат, и руководству
+    send_end_of_shift_reports()
+    send_admin_summary()
+    bot.reply_to(message, "Отчёт по смене отправлен руководству.")
+
+@bot.message_handler(commands=["старт", "startsm"])
+def manual_shift_start(message):
     if message.chat.id == ADMIN_CHAT_ID:
-        send_admin_summary()
-        bot.reply_to(message, "Отчёт по смене отправлен руководству.")
+        bot.reply_to(message, "Старт смены нельзя инициировать в чате руководства.")
+        return
+
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    username = get_username(message)
+    now = datetime.datetime.now(moscow_tz)
+
+    # Назначаем этого пользователя главным на смене
+    if chat_id not in chat_data:
+        chat_data[chat_id] = {'main_id': user_id, 'main_username': username, 'users': {}, 'shift_start': now}
     else:
-        send_end_of_shift_reports()
-        send_admin_summary()
-        bot.reply_to(message, "Отчёт по смене отправлен в этот чат и руководству.")
+        chat_data[chat_id]['main_id'] = user_id
+        chat_data[chat_id]['main_username'] = username
+        chat_data[chat_id]['shift_start'] = now
+
+    # Добавляем пользователя в users, если его там нет
+    if user_id not in chat_data[chat_id]['users']:
+        chat_data[chat_id]['users'][user_id] = {'username': username, 'count': 0, 'reminded': False, 'on_break': False, 'breaks_count': 0, 'late_returns': 0}
+    chat_data[chat_id]['users'][user_id]['last_voice_time'] = now
+
+    bot.send_message(chat_id, f"🚦 Смена началась! Главный на посту: {username}")
+
+@bot.message_handler(commands=["финиш", "finishsm"])
+def manual_shift_finish(message):
+    if message.chat.id == ADMIN_CHAT_ID:
+        bot.reply_to(message, "Финиш смены нельзя инициировать в чате руководства.")
+        return
+
+    chat_id = message.chat.id
+    send_end_of_shift_reports()
+    send_admin_summary()
+    bot.reply_to(message, "Итоговый отчет по смене отправлен руководству!")
 
 def run_scheduler():
     schedule.every(1).minutes.do(check_users_activity)
