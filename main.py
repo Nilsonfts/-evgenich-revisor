@@ -201,6 +201,8 @@ def get_user_by_username(users_dict, username):
 
 @bot.message_handler(content_types=['voice'])
 def handle_voice_message(message):
+    if message.chat.id == ADMIN_CHAT_ID:
+        return
     chat_id = message.chat.id
     user_id = message.from_user.id
     username = get_username(message)
@@ -258,6 +260,8 @@ def break_requested(text):
 
 @bot.message_handler(func=lambda m: m.text and break_requested(m.text))
 def handle_break_request(message):
+    if message.chat.id == ADMIN_CHAT_ID:
+        return
     # Не реагировать на пересланные сообщения!
     if getattr(message, "forward_from", None) or getattr(message, "forward_from_chat", None):
         return
@@ -279,10 +283,14 @@ def handle_break_request(message):
 
 @bot.message_handler(commands=["obed"])
 def obed_command(message):
+    if message.chat.id == ADMIN_CHAT_ID:
+        return
     handle_break_request(message)
 
 @bot.message_handler(commands=["restart"])
 def restart_main(message):
+    if message.chat.id == ADMIN_CHAT_ID:
+        return
     chat_id = message.chat.id
     if chat_id in chat_data:
         chat_data[chat_id]['main_id'] = None
@@ -292,6 +300,8 @@ def restart_main(message):
 
 @bot.message_handler(commands=["karaoke"])
 def karaoke_assign(message):
+    if message.chat.id == ADMIN_CHAT_ID:
+        return
     chat_id = message.chat.id
     if not message.text:
         bot.reply_to(message, "📝 Формат: /karaoke @username")
@@ -358,11 +368,15 @@ def check_users_activity():
 
 @bot.message_handler(commands=["start", "help"])
 def send_welcome(message):
+    if message.chat.id == ADMIN_CHAT_ID:
+        return
     welcome_message = random.choice(welcome_phrases)
     bot.reply_to(message, welcome_message)
 
-@bot.message_handler(commands=["отчет", "otchet"])
+@bot.message_handler(commands=["промежуточный", "promezhut"])
 def send_interim_report(message):
+    if message.chat.id == ADMIN_CHAT_ID:
+        return
     chat_id = message.chat.id
     if chat_id not in chat_data:
         bot.send_message(chat_id, "Нет данных по смене в этом чате.")
@@ -500,6 +514,17 @@ def send_admin_summary():
         logging.error(f"Admin summary error: {e}")
     shift_reports.clear()
 
+@bot.message_handler(commands=["отчет", "otchet"])
+def send_manual_admin_report(message):
+    # Можно вызвать в любом чате: отчёт уйдёт и в чат, и руководству
+    if message.chat.id == ADMIN_CHAT_ID:
+        send_admin_summary()
+        bot.reply_to(message, "Отчёт по смене отправлен руководству.")
+    else:
+        send_end_of_shift_reports()
+        send_admin_summary()
+        bot.reply_to(message, "Отчёт по смене отправлен в этот чат и руководству.")
+
 def run_scheduler():
     schedule.every(1).minutes.do(check_users_activity)
     schedule.every().day.at("01:01").do(send_end_of_shift_reports)
@@ -513,4 +538,9 @@ if __name__ == '__main__':
     scheduler_thread = threading.Thread(target=run_scheduler)
     scheduler_thread.daemon = True
     scheduler_thread.start()
-    bot.polling(none_stop=True)
+    while True:
+        try:
+            bot.polling(none_stop=True, timeout=60, long_polling_timeout=60)
+        except Exception as e:
+            logging.error(f"Polling exception: {e}")
+            time.sleep(10)
