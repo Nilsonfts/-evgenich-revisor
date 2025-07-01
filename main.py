@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Финальная версия бота v3.0:
-- Добавлены команды /restart, /start @user, /отчет, /выгрузка, /обед, /статистика.
-- Обновлена справка /help.
-- Разделение прав и отчетов.
+Финальная версия бота v3.1:
+- Добавлены теги (@username) во все автоматические напоминания.
+- Подробный отчет по смене в 04:01.
+- Автоматический общий рейтинг в 10:00 в админ-чат.
+- Команды /отчет и /весьотчет для админов по запросу.
+- Без меню, управление текстовыми командами.
 """
 
 import logging
@@ -44,6 +46,7 @@ if not BOT_TOKEN:
 BOSS_ID = 196614680
 ADMIN_REPORT_CHAT_ID = -1002645821302 
 STATS_FILE = 'user_stats.csv'
+LAST_REPORT_FILE = 'last_shift_report.txt'
 
 # Параметры смены
 VOICE_TIMEOUT_MINUTES = 40
@@ -219,19 +222,17 @@ def handle_start(message):
     bot.send_message(chat_id, f"👑 {username}, вы заступили на смену! Удачи!")
     save_history_event(chat_id, from_user.id, username, "Стал главным на смене")
 
-
 @bot.message_handler(commands=['restart', 'рестарт'])
 @admin_required
 def handle_restart(message):
     chat_id = message.chat.id
-    if chat_id in chat_data:
+    if chat_id in chat_data and chat_data[chat_id].get('main_id') is not None:
         chat_data[chat_id]['main_id'] = None
         chat_data[chat_id]['main_username'] = None
         bot.reply_to(message, "🔄 Смена перезапущена. Текущий главный сброшен. Теперь любой может стать главным, отправив ГС.")
         save_history_event(chat_id, message.from_user.id, get_username(message.from_user), "Перезапустил смену")
     else:
         bot.reply_to(message, "Активной смены в этом чате и так не было.")
-
 
 @bot.message_handler(commands=['check', 'промежуточный', 'статистика'])
 @admin_required
@@ -267,7 +268,6 @@ def admin_check_shift(message):
 @bot.message_handler(commands=['отчет'])
 @admin_required
 def admin_get_final_report(message):
-    """Принудительно генерирует и отправляет финальный отчет по текущей смене."""
     chat_id = message.chat.id
     data = chat_data.get(chat_id)
 
@@ -303,43 +303,91 @@ def admin_export_history(message):
         with open(filename, 'rb') as f:
             bot.send_document(message.chat.id, f, caption="Лог событий текущей смены.")
         
-        os.remove(filename) # Удаляем временный файл
+        os.remove(filename)
     except Exception as e:
         logging.error(f"Ошибка при выгрузке истории: {e}")
         bot.reply_to(message, "Произошла ошибка при создании файла истории.")
 
-
 @bot.message_handler(commands=['help'])
 def handle_help(message):
     help_text = """
-    *Справка по командам бота:*
+*Справка по командам бота:*
 
-    `/start` — Назначить себя главным на смене.
-    `/start @username` — Назначить другого пользователя главным по его тегу.
-    `/restart` или `/рестарт` — Перезапустить смену, сбросив текущего главного.
+`/start` — Назначить себя главным на смене.
+`/start @username` — Назначить другого пользователя главным по его тегу.
+`/restart` или `/рестарт` — Перезапустить смену, сбросив текущего главного.
 
-    `/промежуточный` — Показать промежуточный отчет по активности.
-    `/статистика` — Показать текущую статистику (аналог промежуточного отчета).
-    `/отчет` — Сформировать и отправить финальный отчет по смене в чат и руководству.
+`/промежуточный` — Показать промежуточный отчет по активности.
+`/статистика` — Показать текущую статистику (аналог промежуточного отчета).
+`/отчет` — Сформировать и отправить финальный отчет по смене в чат и руководству.
 
-    `/обед` или `/перерыв` — Уйти на перерыв (только для главного).
-    `/выгрузка` — Выгрузить историю всех событий смены в виде файла.
+`/обед` или `/перерыв` — Уйти на перерыв (только для главного).
+`/выгрузка` — Выгрузить историю всех событий смены в виде файла.
 
-    `/сводка` — Посмотреть свою личную статистику за все время.
-    `/analyze` или `/весьотчет` — (Только для админов) Показать рейтинг всех сотрудников.
-    `/help` — Показать эту справку.
+`/сводка` — Посмотреть свою личную статистику за все время.
+`/analyze` или `/весьотчет` — (Только для админов) Показать рейтинг всех сотрудников.
+`/help` — Показать эту справку.
 
-    *Ключевые слова:*
-    - Для ухода на перерыв можно написать: `перерыв`, `обед`, `покурить`, `отойду` и т.д.
-    - Для возврата с перерыва: `на месте`, `вернулся`, `пришел`, `тут` и т.д.
-    """
+*Ключевые слова:*
+- Для ухода на перерыв можно написать: `перерыв`, `обед`, `покурить`, `отойду` и т.д.
+- Для возврата с перерыва: `на месте`, `вернулся`, `пришел`, `тут` и т.д.
+"""
     bot.reply_to(message, help_text)
     
 @bot.message_handler(commands=['analyze', 'весьотчет'])
 @admin_required
 def admin_analyze_all_users(message):
-    # Эта функция остается без изменений
-    pass 
+    all_stats = load_user_stats()
+    if not all_stats:
+        bot.reply_to(message, "База данных статистики пуста. Пока некого анализировать.")
+        return
+
+    processed_users = []
+    for user_id, stats in all_stats.items():
+        total_shifts = stats.get('total_shifts', 0)
+        if total_shifts == 0: continue
+        avg_voices_per_shift = stats.get('total_voices', 0) / total_shifts
+        lateness_ratio = (stats.get('total_lates', 0) / total_shifts) * 100
+        processed_users.append({
+            'username': stats.get('username', f'ID: {user_id}'),
+            'avg_voices': avg_voices_per_shift,
+            'lateness_percent': lateness_ratio,
+            'shifts': total_shifts
+        })
+
+    processed_users.sort(key=lambda x: x['avg_voices'], reverse=True)
+    report_lines = ["📊 **Общая сводка по всем сотрудникам**", "_(Отсортировано по ср. кол-ву ГС за смену)_\n"]
+    medals = {0: "🥇", 1: "🥈", 2: "🥉"}
+
+    for i, user in enumerate(processed_users):
+        rank_icon = medals.get(i, f"{i+1}.")
+        report_lines.append(
+            f"*{rank_icon}* {user['username']} — *Ср. ГС:* `{user['avg_voices']:.1f}` | *Опоздания:* `{user['lateness_percent']:.0f}%` | *Смен:* `{user['shifts']}`"
+        )
+
+    if not processed_users:
+         report_lines.append("Нет сотрудников с отработанными сменами.")
+    bot.send_message(message.chat.id, "\n".join(report_lines))
+
+@bot.message_handler(commands=['сводка'])
+def my_total_stats(message):
+    user_id = message.from_user.id
+    username = get_username(message.from_user)
+    all_stats = load_user_stats()
+    user_stats = all_stats.get(user_id)
+
+    if not user_stats:
+        bot.reply_to(message, f"{username}, у вас пока нет сохраненной истории смен.")
+        return
+
+    report_text = (
+        f"⭐️ **Общая статистика для {username}** ⭐️\n\n"
+        f"👑 **Всего смен отработано:** {user_stats.get('total_shifts', 0)}\n"
+        f"🗣️ **Всего голосовых записано:** {user_stats.get('total_voices', 0)}\n"
+        f"☕️ **Всего перерывов:** {user_stats.get('total_breaks', 0)}\n"
+        f"⏳ **Всего опозданий с перерыва:** {user_stats.get('total_lates', 0)}"
+    )
+    bot.reply_to(message, report_text)
 
 # ========================================
 #           ОБРАБОТЧИКИ СООБЩЕНИЙ
@@ -435,17 +483,21 @@ def check_users_activity():
         main_id = data.get('main_id')
         if not main_id or not data.get('users', {}).get(main_id): continue
         user = data['users'][main_id]
-        
+        username = user.get('username', 'Ведущий')
+
         if user.get('on_break') and not user.get('pre_return_warning_sent', False):
             if user.get('break_start_time') and (now - user['break_start_time']).total_seconds() / 60 > BREAK_DURATION_MINUTES:
-                bot.send_message(chat_id, random.choice(soviet_phrases.get("return_demand", ["Пора возвращаться."])))
+                reminder_text = random.choice(soviet_phrases.get("return_demand", ["пора возвращаться."]))
+                bot.send_message(chat_id, f"⏰ {username}, {reminder_text}")
                 user['pre_return_warning_sent'] = True
         
         last_voice = user.get('last_voice_time')
         if not user.get('on_break') and last_voice and not user.get('reminder_sent_at'):
             if (now - last_voice).total_seconds() / 60 > VOICE_TIMEOUT_MINUTES:
-                bot.send_message(chat_id, random.choice(soviet_phrases.get("voice_reminder", [f"🚨 {user['username']}, вы давно не выходили в эфир."])))
+                reminder_text = random.choice(soviet_phrases.get("voice_reminder", ["вы давно не выходили в эфир."]))
+                bot.send_message(chat_id, f"🚨 {username}, {reminder_text}")
                 user['reminder_sent_at'] = now
+                save_history_event(chat_id, main_id, username, "Отправлено напоминание о простое")
 
 def generate_detailed_report(chat_id: int, data: dict) -> list:
     main_id = data.get('main_id')
@@ -504,7 +556,6 @@ def send_end_of_shift_reports():
     for chat_id in active_chats:
         data = chat_data.get(chat_id)
         if not data or not data.get('main_id') or data['main_id'] not in data.get('users', {}):
-            del chat_data[chat_id]
             continue
         
         main_user_data = data['users'][data['main_id']]
@@ -539,7 +590,7 @@ def run_scheduler():
 #           ЗАПУСК БОТА
 # ========================================
 if __name__ == '__main__':
-    logging.info("🤖 Бот (версия 3.0, без меню) запущен...")
+    logging.info("🤖 Бот (версия 3.1, без меню) запущен...")
     threading.Thread(target=run_scheduler, daemon=True).start()
     while True:
         try:
