@@ -20,7 +20,7 @@ import random
 import re
 from telebot import types
 from functools import wraps
-
+from typing import Dict, List, Optional
 # Попытка импортировать фразы, если файла нет - используются заглушки
 try:
     from phrases import (
