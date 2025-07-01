@@ -23,21 +23,32 @@ from typing import Dict, Optional, List, Tuple
 from telebot import types
 from functools import wraps
 
-# Импортируем фразы из отдельного файла
-from phrases import (
-    welcome_phrases, soviet_phrases, duty_call_phrases, duty_late_phrases,
-    BREAK_KEYWORDS, RETURN_CONFIRM_WORDS, ACHIEVEMENTS
-)
+# Попытка импортировать фразы, если файла нет - используются заглушки
+try:
+    from phrases import (
+        welcome_phrases, soviet_phrases, duty_call_phrases, duty_late_phrases,
+        BREAK_KEYWORDS, RETURN_CONFIRM_WORDS, ACHIEVEMENTS
+    )
+except ImportError:
+    logging.warning("Файл 'phrases.py' не найден. Используются значения по умолчанию.")
+    BREAK_KEYWORDS = ["перерыв", "отдых", "уйти на перерыв"]
+    RETURN_CONFIRM_WORDS = ["вернулся", "на месте", "я тут"]
+    soviet_phrases = {"too_short": ["Слишком коротко, товарищ!"]}
+
 
 # ========================================
 #           НАСТРОЙКИ И ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
 # ========================================
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=[logging.FileHandler("bot.log", encoding="utf-8"), logging.StreamHandler()])
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN: raise RuntimeError("Не задан BOT_TOKEN в переменных окружения.")
 
+# Убедитесь, что BOT_TOKEN задан в переменных окружения
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise RuntimeError("Не задан BOT_TOKEN в переменных окружения. Задайте его перед запуском.")
+
+# ID суперпользователя (БОСС) и чата для админских отчетов
 BOSS_ID = 196614680
-ADMIN_REPORT_CHAT_ID = -1002645821302
+ADMIN_REPORT_CHAT_ID = -1002645821302 # Пример ID, замените на свой
 
 # Параметры смены
 VOICE_TIMEOUT_MINUTES = 40
@@ -60,7 +71,9 @@ def is_admin(user_id, chat_id):
     """Проверяет, является ли пользователь администратором или БОССОМ."""
     if user_id == BOSS_ID: return True
     try:
-        return user_id in [admin.user.id for admin in bot.get_chat_administrators(chat_id)]
+        # Получаем список ID администраторов
+        admin_ids = [admin.user.id for admin in bot.get_chat_administrators(chat_id)]
+        return user_id in admin_ids
     except Exception as e:
         logging.error(f"Ошибка проверки администратора в чате {chat_id}: {e}")
         return False
@@ -76,7 +89,7 @@ def admin_required(func):
     return wrapper
 
 def get_username(user) -> str:
-    """Получает username или имя пользователя."""
+    """Получает @username или имя пользователя."""
     return f"@{user.username}" if user.username else user.first_name
 
 def init_user_data(user_id, username):
@@ -117,7 +130,8 @@ def get_chat_title(chat_id: int) -> str:
     try:
         title = bot.get_chat(chat_id).title
         return title if title else str(chat_id)
-    except: return str(chat_id)
+    except Exception:
+        return str(chat_id)
 
 def save_history_event(chat_id, user_id, username, event_description):
     """Сохраняет событие в историю для последующего аудита."""
@@ -126,13 +140,6 @@ def save_history_event(chat_id, user_id, username, event_description):
     user_history[chat_id].append(f"{now_str} | {username} ({user_id}) | {event_description}")
     logging.info(f"HISTORY [{get_chat_title(chat_id)}]: {username} - {event_description}")
 
-def generate_progress_bar(current, goal, length=10):
-    """Генерирует текстовый прогресс-бар."""
-    if goal == 0: return "[----------] 0%"
-    percent = int((current / goal) * 100)
-    filled_length = int(length * current // goal)
-    bar = '█' * filled_length + '─' * (length - filled_length)
-    return f"[{bar}] {percent}%"
 
 # ========================================
 #           КЛАВИАТУРЫ И НАВИГАЦИЯ
@@ -176,23 +183,6 @@ def handle_start(message):
     users = chat_data[chat_id]['users']
     if from_user.id not in users:
         users[from_user.id] = init_user_data(from_user.id, username)
-
-    # Логика передачи смены
-    match = re.match(r"/(start|старт)\s+@([a-zA-Z0-9_]+)", message.text.strip())
-    if match:
-        target_username = "@" + match.group(2)
-        target_user_info = next((u for u in users.values() if u['username'] == target_username), None)
-        if not target_user_info:
-            bot.reply_to(message, f"Пользователь {target_username} не найден. Он должен сначала что-нибудь написать в чате.")
-            return
-
-        target_user_id = next((uid for uid, u in users.items() if u['username'] == target_username), None)
-        markup = types.InlineKeyboardMarkup()
-        accept_button = types.InlineKeyboardButton("✅ Принять смену", callback_data=f"accept_shift_{target_user_id}_{from_user.id}")
-        decline_button = types.InlineKeyboardButton("❌ Отклонить", callback_data=f"decline_shift_{target_user_id}_{from_user.id}")
-        markup.add(accept_button, decline_button)
-        bot.send_message(chat_id, f"{target_username}, пользователь {username} предлагает вам принять смену. Ваш выбор?", reply_markup=markup)
-        return
 
     # Если /start без параметров
     if chat_data[chat_id].get('main_id') is not None:
@@ -257,8 +247,70 @@ def menu_take_break(message):
 def menu_return_from_break(message):
     handle_user_return(message.chat.id, message.from_user.id)
     
-# ... (здесь можно добавить обработчики для "Сводка", "Моя статистика" и админских кнопок) ...
+# --- Обработчики информационных кнопок ---
 
+@bot.message_handler(func=lambda m: m.text in ["⭐️ Моя статистика", "ℹ️ Сводка по смене"])
+def menu_get_stats(message):
+    """Отправляет отчет по текущему главному на смене."""
+    chat_id = message.chat.id
+    data = chat_data.get(chat_id)
+
+    if not data or not data.get('main_id'):
+        bot.reply_to(message, "Смена еще не началась, статистика недоступна.")
+        return
+
+    report_lines = get_report_lines(chat_id, data, full_report=False)
+    final_report = "\n".join(report_lines)
+    bot.send_message(chat_id, final_report, parse_mode="Markdown")
+
+
+@bot.message_handler(func=lambda m: m.text == "🚨 Отчет по прогульщикам")
+@admin_required
+def menu_get_truants(message):
+    """(Только для админов) Показывает, кто давно не был активен."""
+    chat_id = message.chat.id
+    data = chat_data.get(chat_id, {})
+    users = data.get('users', {})
+    now = datetime.datetime.now(moscow_tz)
+    
+    if not users:
+        bot.reply_to(message, "В базе данных пока нет пользователей для этого чата.")
+        return
+
+    truants = []
+    for user_id, user_data in users.items():
+        if user_data.get('last_voice_time'):
+            minutes_since_last_voice = (now - user_data['last_voice_time']).total_seconds() / 60
+            if minutes_since_last_voice > VOICE_TIMEOUT_MINUTES:
+                truants.append(f"❗️ {user_data['username']} - неактивен {int(minutes_since_last_voice)} мин.")
+    
+    if truants:
+        report = "🚨 **Отчет по неактивным пользователям:**\n\n" + "\n".join(truants)
+    else:
+        report = "✅ Все недавние пользователи были активны."
+    bot.send_message(chat_id, report, parse_mode="Markdown")
+
+
+@bot.message_handler(func=lambda m: m.text == "🆘 Помощь")
+def menu_get_help(message):
+    """Отправляет справочное сообщение."""
+    help_text = """
+🆘 **Справка по боту** 🆘
+
+Я бот для контроля активности ведущих в чате.
+
+- **Как стать главным?** Отправьте первое голосовое сообщение или используйте команду `/start`.
+- **Перерыв**: Используйте кнопки в меню. Перерыв длится 15 минут.
+- **Голосовые**: Должны быть > 7 секунд. Пауза между ними > 2 минут.
+
+**Основные команды:**
+`/start` - Начать смену.
+`/menu` - Показать навигационное меню.
+`/training_start` - Войти в режим тренировки (действия не учитываются).
+`/training_stop` - Выйти из режима тренировки.
+"""
+    bot.reply_to(message, help_text, parse_mode="Markdown")
+    
 
 @bot.message_handler(func=lambda m: m.text and any(word in m.text.lower() for word in BREAK_KEYWORDS))
 def handle_break_request(message):
@@ -267,7 +319,7 @@ def handle_break_request(message):
     chat_id = message.chat.id
 
     if chat_data.get(chat_id, {}).get('main_id') != user_id:
-        bot.reply_to(message, "⛔ Перерыв может взять только главный на смене.")
+        # Не отвечаем, если это не главный, чтобы не спамить
         return
         
     user = chat_data.get(chat_id, {}).get('users', {}).get(user_id, {})
@@ -277,7 +329,8 @@ def handle_break_request(message):
 
     last_break = user.get('last_break_time')
     if last_break and (datetime.datetime.now(moscow_tz) - last_break).total_seconds() / 60 < BREAK_DELAY_MINUTES:
-        bot.reply_to(message, f"Вы недавно были на перерыве. Следующий можно взять через {int(BREAK_DELAY_MINUTES - (datetime.datetime.now(moscow_tz) - last_break).total_seconds() / 60)} мин.")
+        remaining_time = int(BREAK_DELAY_MINUTES - (datetime.datetime.now(moscow_tz) - last_break).total_seconds() / 60)
+        bot.reply_to(message, f"Вы недавно были на перерыве. Следующий можно взять через {remaining_time} мин.")
         return
 
     user.update({
@@ -306,7 +359,7 @@ def handle_voice_message(message):
     user = chat_data[chat_id]['users'][user_id]
 
     if user['in_training']:
-        bot.reply_to(message, f"Тренировка: получено ГС, длина {message.voice.duration} сек. Минимальная норма: {MIN_VOICE_SECONDS} сек. Отлично!")
+        bot.reply_to(message, f"Тренировка: получено ГС, длина {message.voice.duration} сек. Минимальная норма: {MIN_VOICE_SECONDS} сек.")
         return
 
     if user.get('on_break'):
@@ -329,7 +382,8 @@ def handle_voice_message(message):
     last_voice = user.get('last_voice_time')
     # Анти-флуд контроль
     if last_voice and (now - last_voice).total_seconds() < VOICE_COOLDOWN_SECONDS:
-        bot.reply_to(message, f"Слишком часто! Следующее голосовое будет засчитано в статистику через {int(VOICE_COOLDOWN_SECONDS - (now - last_voice).total_seconds())} сек.")
+        remaining_cooldown = int(VOICE_COOLDOWN_SECONDS - (now - last_voice).total_seconds())
+        bot.reply_to(message, f"Слишком часто! Следующее голосовое будет засчитано в статистику через {remaining_cooldown} сек.")
         save_history_event(chat_id, user_id, username, "Прислал голосовое (флуд)")
         return
 
@@ -374,17 +428,15 @@ def check_users_activity():
         
         # Проверка возврата с перерыва
         if user.get('on_break') and not user.get('pre_return_warning_sent'):
-            minutes_on_break = (now - user['break_start_time']).total_seconds() / 60
-            if minutes_on_break > BREAK_DURATION_MINUTES:
+            if (now - user['break_start_time']).total_seconds() / 60 > BREAK_DURATION_MINUTES:
                 bot.send_message(chat_id, f"⏰ @{user['username']}, твой {BREAK_DURATION_MINUTES}-минутный перерыв закончился. Пора возвращаться!")
                 user['pre_return_warning_sent'] = True
         
         # Логика напоминаний об активности (простое)
         last_voice = user.get('last_voice_time')
         if not user.get('on_break') and last_voice and not user.get('reminder_sent_at'):
-            minutes_since_last_voice = (now - last_voice).total_seconds() / 60
-            if minutes_since_last_voice > VOICE_TIMEOUT_MINUTES:
-                bot.send_message(chat_id, f"🚨 @{user['username']}, вы давно не выходили в эфир. Как дела?")
+            if (now - last_voice).total_seconds() / 60 > VOICE_TIMEOUT_MINUTES:
+                bot.send_message(chat_id, f"🚨 {user['username']}, вы давно не выходили в эфир. Как дела?")
                 user['reminder_sent_at'] = now
                 save_history_event(chat_id, main_id, user['username'], "Отправлено напоминание о простое")
 
@@ -392,7 +444,7 @@ def check_users_activity():
 def get_report_lines(chat_id, data, full_report=False):
     """Генерирует строки для отчета."""
     main_id = data.get('main_id')
-    if not main_id or main_id not in data['users']: return ["Главный не назначен или нет данных."]
+    if not main_id or main_id not in data.get('users', {}): return ["Главный не назначен или нет данных."]
     
     user = data['users'][main_id]
     now = datetime.datetime.now(moscow_tz)
@@ -403,8 +455,8 @@ def get_report_lines(chat_id, data, full_report=False):
     short_voices_perc = (sum(1 for d in user['voice_durations'] if d < 10) / len(user['voice_durations']) * 100) if user['voice_durations'] else 0
     avg_response_time = sum(user['response_times']) / len(user['response_times']) if user['response_times'] else 0
     max_pause = max(user['voice_deltas']) if user['voice_deltas'] else 0
-    first_voice_str = user.get('first_voice_time', now).strftime('%H:%M') if user.get('first_voice_time') else "N/A"
-    last_voice_str = user.get('last_voice_time', now).strftime('%H:%M') if user.get('last_voice_time') else "N/A"
+    first_voice_str = user.get('first_voice_time').strftime('%H:%M') if user.get('first_voice_time') else "N/A"
+    last_voice_str = user.get('last_voice_time').strftime('%H:%M') if user.get('last_voice_time') else "N/A"
 
     # Формирование отчета
     tag = "#Отчет_Смены" if full_report else "#Промежуточный_Отчет"
@@ -415,7 +467,6 @@ def get_report_lines(chat_id, data, full_report=False):
         "---",
         "📊 **КОЛИЧЕСТВО:**",
         f"🗣️ Голосовых: {user['count']} из {EXPECTED_VOICES_PER_SHIFT} ({user['count'] / EXPECTED_VOICES_PER_SHIFT:.0%})",
-        f"👍 Благодарностей: {user['kudos']}",
         "---",
         "⏳ **ДИСЦИПЛИНА:**",
         f"☕ Перерывов: {user['breaks_count']}",
@@ -461,9 +512,7 @@ def generate_analytical_summary(user_data):
 
 def send_end_of_shift_reports():
     """Отправляет итоговые отчеты в конце смены."""
-    global shift_reports
-    shift_reports = []
-    
+    logging.info("Начало отправки итоговых отчетов...")
     for chat_id, data in chat_data.items():
         main_id = data.get('main_id')
         if not main_id: continue
@@ -482,8 +531,7 @@ def send_end_of_shift_reports():
         except Exception as e:
             logging.error(f"Не удалось отправить отчет в чат {chat_id}: {e}")
             
-        shift_reports.append({"chat_id": chat_id, "report": final_report})
-    
+    # Очищаем данные для следующей смены
     chat_data.clear()
     user_history.clear()
     logging.info("Данные смены очищены, подготовка к новой смене.")
@@ -491,7 +539,8 @@ def send_end_of_shift_reports():
 def run_scheduler():
     """Запускает планировщик фоновых задач."""
     schedule.every(1).minutes.do(check_users_activity)
-    schedule.every().day.at("23:50", moscow_tz).do(send_end_of_shift_reports)
+    # Отправка отчета каждый день в 23:50 по МСК
+    schedule.every().day.at("23:50", "Europe/Moscow").do(send_end_of_shift_reports)
     
     while True:
         schedule.run_pending()
@@ -505,7 +554,7 @@ if __name__ == '__main__':
     threading.Thread(target=run_scheduler, daemon=True).start()
     while True:
         try:
-            bot.polling(none_stop=True)
+            bot.polling(none_stop=True, interval=0)
         except Exception as e:
             logging.error(f"Критическая ошибка polling: {e}")
             time.sleep(15)
