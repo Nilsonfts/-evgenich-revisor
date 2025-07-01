@@ -21,6 +21,7 @@ BREAK_DURATION_MINUTES = 15
 EXPECTED_VOICES_PER_SHIFT = 15
 MIN_VOICE_SECONDS = 7
 BREAK_DELAY_MINUTES = 60  # Перерыв можно не чаще 1 раза в BREAK_DELAY_MINUTES
+WAIT_RETURN_CONFIRM_MINUTES = 3  # Через сколько минут повторно требовать подтверждение возврата
 
 ADMIN_CHAT_ID = -1002645821302
 shift_reports = []
@@ -227,6 +228,25 @@ soviet_phrases = {
         "🌞 Жду текст ведущего, не расслабляйся.",
         "🛠️ Перерыв был, теперь за работу.",
         "🚦 Работать, работать и ещё раз работать.",
+    ],
+    "return_demand": [
+        "⏰ 15 минут прошло! Подтверди, что вернулся: напиши 'Я на месте', 'пришёл', 'покурил', 'вернулся' или пришли голосовое!",
+        "🚨 Перерыв окончен! Где твой голос или сообщение? Отметься!",
+        "🕰️ Всё, отдых закончен. Напиши 'на месте' или пришли голосовое!",
+        "👀 Я жду подтверждения возврата! Не тяни, эфир ждёт.",
+        "🔥 Перерыв завершён! Срочно отметься в чате.",
+        "🎙️ Вернулся? Жду голосовое или текст 'я на месте'.",
+        "😤 Отдых закончился! Подтверди, что тут.",
+        "📢 Без отметки не начнём работу! Жду подтверждения.",
+        "😈 Не притворяйся невидимкой. Где твое 'я тут'?",
+        "🥵 Перерыв вышел! Быстро отметься!",
+    ],
+    "return_demand_hard": [
+        "😡 Ты что, потерялся? Срочно подтверди возврат!",
+        "🤬 Сколько можно ждать? Жду 'я на месте' или голосовое!",
+        "😈 Не вынуждай повторять — отметься немедленно!",
+        "🚨 Второй раз зову! Эфир не ждёт бездельников!",
+        "👹 Если не отметишься — выговор обеспечен!",
     ]
 }
 
@@ -262,6 +282,10 @@ duty_late_phrases = [
 BREAK_KEYWORDS = [
     "перерыв", "перекур", "покурить", "я на перерыв", "я на обед", "обед", "я кушать",
     "кушать", "ем", "есть", "отдохнуть", "пить", "кофе", "чай", "отойти", "отойду"
+]
+
+RETURN_CONFIRM_WORDS = [
+    "на месте", "пришел", "пришёл", "покурил", "вернулся", "тут", "готов", "я тут"
 ]
 
 chat_data = {}
@@ -319,10 +343,26 @@ def handle_voice_message(message):
     username = get_username(message)
     now = datetime.datetime.now(moscow_tz)
     if chat_id not in chat_data:
-        chat_data[chat_id] = {'main_id': None, 'main_username': None, 'users': {}, 'shift_start': now, 'chat_title': get_chat_title(chat_id)}
+        chat_data[chat_id] = {
+            'main_id': None,
+            'main_username': None,
+            'users': {},
+            'shift_start': now,
+            'chat_title': get_chat_title(chat_id)
+        }
     users = chat_data[chat_id]['users']
     if user_id not in users:
-        users[user_id] = {'username': username, 'count': 0, 'reminded': False, 'on_break': False, 'breaks_count': 0, 'late_returns': 0, 'last_remind_time': None}
+        users[user_id] = {
+            'username': username,
+            'count': 0,
+            'reminded': False,
+            'on_break': False,
+            'breaks_count': 0,
+            'late_returns': 0,
+            'last_remind_time': None,
+            'waiting_return_confirm': False,
+            'remind_return_time': None,
+        }
     user = users[user_id]
     voice_duration = message.voice.duration
     if voice_duration < MIN_VOICE_SECONDS:
@@ -333,10 +373,21 @@ def handle_voice_message(message):
     user['reminded'] = False
     user['last_remind_time'] = None
     chat_data[chat_id]['chat_title'] = get_chat_title(chat_id)
-    # Маркируем выполнение "дежурного" если это подходящее время
+    # Дежурный — отметка
     if chat_data[chat_id].get('duty_check_time'):
         if now - chat_data[chat_id]['duty_check_time'] < datetime.timedelta(minutes=31):
             chat_data[chat_id]['duty_confirmed'] = True
+
+    # Проверка подтверждения возврата с перерыва
+    if user.get('waiting_return_confirm'):
+        user['on_break'] = False
+        user['waiting_return_confirm'] = False
+        user['reminded'] = False
+        user['remind_return_time'] = None
+        bot.send_message(chat_id, random.choice(soviet_phrases["return_success"]).format(username=username))
+        if (now - user['break_start_time']).total_seconds() / 60 > BREAK_DURATION_MINUTES:
+            user['late_returns'] += 1
+
     if chat_data[chat_id]['main_id'] is None:
         chat_data[chat_id]['main_id'] = user_id
         chat_data[chat_id]['main_username'] = username
@@ -346,7 +397,9 @@ def handle_voice_message(message):
         bot.send_message(chat_id, text)
     elif chat_data[chat_id]['main_id'] == user_id and user['count'] > 1:
         bot.send_message(chat_id, f"{username}, {random.choice(soviet_phrases['accept'])}")
-    if user.get('on_break'):
+
+    # Старый режим возврата с перерыва (на всякий случай)
+    if user.get('on_break') and not user.get('waiting_return_confirm'):
         break_start = user.get('break_start_time')
         if break_start:
             minutes_on_break = (user['last_voice_time'] - break_start).total_seconds() / 60
@@ -357,12 +410,26 @@ def handle_voice_message(message):
     logging.info(f"🎧 Голосовое от {username} в чате {chat_id}. Всего: {users[user_id]['count']}")
 
 @bot.message_handler(func=lambda m: m.text and m.chat.id != ADMIN_CHAT_ID)
-def mark_duty_if_needed(message):
+def mark_duty_and_return_if_needed(message):
     chat_id = message.chat.id
+    user_id = message.from_user.id
+    username = get_username(message)
     now = datetime.datetime.now(moscow_tz)
     if chat_id in chat_data and chat_data[chat_id].get('duty_check_time'):
         if now - chat_data[chat_id]['duty_check_time'] < datetime.timedelta(minutes=31):
             chat_data[chat_id]['duty_confirmed'] = True
+    # Подтверждение возвращения с перерыва текстом
+    user = chat_data.get(chat_id, {}).get('users', {}).get(user_id)
+    if user and user.get('waiting_return_confirm'):
+        lowered = message.text.lower()
+        if any(word in lowered for word in RETURN_CONFIRM_WORDS):
+            user['on_break'] = False
+            user['waiting_return_confirm'] = False
+            user['reminded'] = False
+            user['remind_return_time'] = None
+            bot.send_message(chat_id, random.choice(soviet_phrases["return_success"]).format(username=username))
+            if (now - user['break_start_time']).total_seconds() / 60 > BREAK_DURATION_MINUTES:
+                user['late_returns'] += 1
 
 def break_requested(text):
     lowered = text.lower()
@@ -394,6 +461,9 @@ def handle_break_request(message):
     user['on_break'] = True
     user['break_start_time'] = now
     user['last_break_time'] = now
+    user['waiting_return_confirm'] = False
+    user['reminded'] = False
+    user['remind_return_time'] = None
     ack = random.choice(soviet_phrases["break_acknowledgement"]).format(username=username)
     bot.reply_to(message, ack)
 
@@ -426,16 +496,26 @@ def check_users_activity():
         if not user:
             continue
         now = datetime.datetime.now(moscow_tz)
+        # Перерыв: требование подтверждения возврата
         if user.get('on_break'):
             minutes_on_break = (now - user['break_start_time']).total_seconds() / 60
-            if minutes_on_break > BREAK_DURATION_MINUTES and not user.get('reminded'):
-                try:
-                    phrase = random.choice(soviet_phrases["return_success"])
-                    bot.send_message(chat_id, f"{user['username']}, {phrase}")
-                    user['reminded'] = True
-                except Exception as e:
-                    logging.error(f"Не удалось отправить напоминание о конце перерыва: {e}")
+            # Перерыв закончился, но не подтвержден возврат
+            if minutes_on_break > BREAK_DURATION_MINUTES and not user.get('waiting_return_confirm'):
+                phrase = random.choice(soviet_phrases["return_demand"])
+                bot.send_message(chat_id, f"{user['username']}, {phrase}")
+                user['reminded'] = True
+                user['waiting_return_confirm'] = True
+                user['remind_return_time'] = now
+                continue
+        # Если требуется подтверждение и не подтвердился
+        if user.get('waiting_return_confirm'):
+            remind_time = user.get('remind_return_time')
+            if remind_time and (now - remind_time).total_seconds() / 60 > WAIT_RETURN_CONFIRM_MINUTES:
+                phrase = random.choice(soviet_phrases["return_demand_hard"])
+                bot.send_message(chat_id, f"{user['username']}, {phrase}")
+                user['remind_return_time'] = now
             continue
+        # Обычные напоминания о голосовых
         if 'last_voice_time' in user:
             minutes_passed = (now - user['last_voice_time']).total_seconds() / 60
             if minutes_passed > VOICE_TIMEOUT_MINUTES:
