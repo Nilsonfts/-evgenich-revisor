@@ -1,21 +1,3 @@
-You're getting a `SyntaxError` because the conversational text at the beginning of my previous answer was included in your Python file. The Python interpreter can only read code, not plain English.
-
-To fix this, replace the entire contents of your `/app/main.py` file with the corrected code block below, which omits the introductory text.
-
------
-
-```python
-# -*- coding: utf-8 -*-
-"""
-Многофункциональный Telegram-бот для контроля смен, голосовых, перерывов, отчетов.
-Включает:
-- Обширные банки фраз для различных ситуаций.
-- Команды: /start, /старт, /help, /статистика, /выгрузка, /обед, /промежуточный, /отчет, /restart.
-- Систему смен и "главных", автоматические и ручные отчеты.
-- Учет перерывов, возвратов, опозданий, активности пользователей.
-- Расширенное логирование, справку, выгрузку истории в TXT/CSV, и статистику по каждому чату.
-"""
-
 import logging
 import os
 import telebot
