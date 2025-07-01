@@ -1,4 +1,8 @@
-Of course. Here is the complete, unified, and working code for the Telegram bot, created by combining all the provided versions. The structure is based on `Version24`, and the missing logic and extensive phrase banks have been filled in from the other versions (`v17`, `v18`, `v19`, `v23`, etc.) to create a single, feature-rich script.
+You're getting a `SyntaxError` because the conversational text at the beginning of my previous answer was included in your Python file. The Python interpreter can only read code, not plain English.
+
+To fix this, replace the entire contents of your `/app/main.py` file with the corrected code block below, which omits the introductory text.
+
+-----
 
 ```python
 # -*- coding: utf-8 -*-
@@ -688,4 +692,5 @@ if __name__ == '__main__':
         except Exception as e:
             logging.error(f"Критическая ошибка polling: {e}")
             time.sleep(15)
+
 ```
