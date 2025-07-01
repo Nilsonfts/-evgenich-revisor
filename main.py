@@ -99,7 +99,6 @@ def handle_user_return(chat_id, user_id):
         bot.send_message(chat_id, f"👍 {user['username']}, с возвращением! Молодец, что вернулись вовремя.")
 
     save_history_event(chat_id, user_id, user['username'], f"Вернулся с перерыва (длительность {break_duration_minutes:.1f} мин)")
-    # Создаем фейковый объект message для вызова show_menu
     fake_message = types.SimpleNamespace(chat=types.SimpleNamespace(id=chat_id), from_user=types.SimpleNamespace(id=user_id))
     show_menu(fake_message)
 
