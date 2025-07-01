@@ -509,5 +509,3 @@ if __name__ == '__main__':
         except Exception as e:
             logging.error(f"Критическая ошибка polling: {e}")
             time.sleep(15)
-
-```
