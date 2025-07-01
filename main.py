@@ -279,64 +279,17 @@ duty_late_phrases = [
     "📉 За такие опоздания премии не бывает.",
 ]
 
-# --- Транслит-функции ---
-RU_TO_LAT_LAYOUT = {
-    'й':'q', 'ц':'w', 'у':'e', 'к':'r', 'е':'t', 'н':'y', 'г':'u', 'ш':'i', 'щ':'o', 'з':'p', 'х':'[', 'ъ':']',
-    'ф':'a', 'ы':'s', 'в':'d', 'а':'f', 'п':'g', 'р':'h', 'о':'j', 'л':'k', 'д':'l', 'ж':';', 'э':'\'',
-    'я':'z', 'ч':'x', 'с':'c', 'м':'v', 'и':'b', 'т':'n', 'ь':'m', 'б':',', 'ю':'.',
-    'ё':'`',
-    'Й':'Q', 'Ц':'W', 'У':'E', 'К':'R', 'Е':'T', 'Н':'Y', 'Г':'U', 'Ш':'I', 'Щ':'O', 'З':'P', 'Х':'{', 'Ъ':'}',
-    'Ф':'A', 'Ы':'S', 'В':'D', 'А':'F', 'П':'G', 'Р':'H', 'О':'J', 'Л':'K', 'Д':'L', 'Ж':':', 'Э':'"',
-    'Я':'Z', 'Ч':'X', 'С':'C', 'М':'V', 'И':'B', 'Т':'N', 'Ь':'M', 'Б':'<', 'Ю':'>', 'Ё':'~'
-}
-LAT_TO_RU_LAYOUT = {v: k for k, v in RU_TO_LAT_LAYOUT.items()}
-
-def translit_rus_to_lat(text):
-    return ''.join(RU_TO_LAT_LAYOUT.get(ch, ch) for ch in text)
-
-def translit_lat_to_rus(text):
-    return ''.join(LAT_TO_RU_LAYOUT.get(ch, ch) for ch in text)
-
-TRANSLIT_COMMANDS = {
-    translit_rus_to_lat('промежуточный'): 'promezhut',
-    translit_rus_to_lat('отчет'): 'otchet',
-    translit_rus_to_lat('обед'): 'obed',
-    translit_rus_to_lat('старт'): 'start',
-    translit_rus_to_lat('рестарт'): 'restart',
-}
-
+# --- Ключевые слова для break и return ---
 BREAK_KEYWORDS = [
     "перерыв", "перекур", "покурить", "я на перерыв", "я на обед", "обед", "я кушать",
     "кушать", "ем", "есть", "отдохнуть", "пить", "кофе", "чай", "отойти", "отойду"
 ]
-BREAK_KEYWORDS += [translit_rus_to_lat(w) for w in BREAK_KEYWORDS]
 
 RETURN_CONFIRM_WORDS = [
     "на месте", "пришел", "пришёл", "покурил", "вернулся", "тут", "готов", "я тут"
 ]
-RETURN_CONFIRM_WORDS += [translit_rus_to_lat(w) for w in RETURN_CONFIRM_WORDS]
 
 chat_data = {}
-
-# --- Handler для транслит-команд ---
-@bot.message_handler(func=lambda m: m.text and m.text.startswith('/'))
-def translit_command_handler(message):
-    cmd = message.text.split()[0][1:].split('@')[0].lower()
-    if cmd in TRANSLIT_COMMANDS:
-        real_cmd = TRANSLIT_COMMANDS[cmd]
-        fake_message = message
-        fake_message.text = '/' + real_cmd
-        if real_cmd == 'promezhut':
-            send_interim_report(fake_message)
-        elif real_cmd == 'otchet':
-            send_manual_admin_report(fake_message)
-        elif real_cmd == 'obed':
-            obed_command(fake_message)
-        elif real_cmd == 'start':
-            send_welcome(fake_message)
-        elif real_cmd == 'restart':
-            restart_main(fake_message)
-        return
 
 def get_username(message):
     if message.from_user.username:
@@ -356,28 +309,9 @@ def get_chat_title(chat_id):
     except Exception:
         return str(chat_id)
 
-@bot.message_handler(commands=["start"])
+@bot.message_handler(commands=["start", "старт"])
 def send_welcome(message):
     if message.chat.id == ADMIN_CHAT_ID:
-        return
-    if message.text.strip().lower().startswith("/start @"):
-        match = re.match(r'/start\s+@([a-zA-Z0-9_]+)', message.text.strip())
-        if match:
-            requested_username = "@" + match.group(1)
-            chat_id = message.chat.id
-            if chat_id not in chat_data:
-                bot.reply_to(message, "🚫 В этом чате ещё никого не было.")
-                return
-            users = chat_data[chat_id]['users']
-            uid, userinfo = get_user_by_username(users, requested_username)
-            if uid:
-                chat_data[chat_id]['main_id'] = uid
-                chat_data[chat_id]['main_username'] = requested_username
-                bot.send_message(chat_id, f"⚡️ Ручное назначение: {requested_username} теперь главный на смене! Не забудь, халява не пройдет!")
-            else:
-                bot.reply_to(message, f"Не найден пользователь {requested_username} в этом чате.")
-        else:
-            bot.reply_to(message, "Формат команды: /start @username")
         return
     welcome_message = random.choice(welcome_phrases)
     bot.reply_to(message, welcome_message)
@@ -454,32 +388,9 @@ def handle_voice_message(message):
         bot.send_message(chat_id, random.choice(soviet_phrases["return_success"]).format(username=username))
     logging.info(f"🎧 Голосовое от {username} в чате {chat_id}. Всего: {users[user_id]['count']}")
 
-@bot.message_handler(func=lambda m: m.text and m.chat.id != ADMIN_CHAT_ID)
-def mark_duty_and_return_if_needed(message):
-    chat_id = message.chat.id
-    user_id = message.from_user.id
-    username = get_username(message)
-    now = datetime.datetime.now(moscow_tz)
-    if chat_id in chat_data and chat_data[chat_id].get('duty_check_time'):
-        if now - chat_data[chat_id]['duty_check_time'] < datetime.timedelta(minutes=31):
-            chat_data[chat_id]['duty_confirmed'] = True
-    user = chat_data.get(chat_id, {}).get('users', {}).get(user_id)
-    if user and user.get('waiting_return_confirm'):
-        lowered = message.text.lower()
-        lowered_rus = translit_lat_to_rus(lowered)
-        if any(word in lowered or word in lowered_rus for word in RETURN_CONFIRM_WORDS):
-            user['on_break'] = False
-            user['waiting_return_confirm'] = False
-            user['reminded'] = False
-            user['remind_return_time'] = None
-            bot.send_message(chat_id, random.choice(soviet_phrases["return_success"]).format(username=username))
-            if (now - user['break_start_time']).total_seconds() / 60 > BREAK_DURATION_MINUTES:
-                user['late_returns'] += 1
-
 def break_requested(text):
     lowered = text.lower()
-    lowered_rus = translit_lat_to_rus(lowered)
-    return any(word in lowered or word in lowered_rus for word in BREAK_KEYWORDS)
+    return any(word in lowered for word in BREAK_KEYWORDS)
 
 @bot.message_handler(func=lambda m: m.text and break_requested(m.text))
 def handle_break_request(message):
@@ -513,13 +424,13 @@ def handle_break_request(message):
     ack = random.choice(soviet_phrases["break_acknowledgement"]).format(username=username)
     bot.reply_to(message, ack)
 
-@bot.message_handler(commands=["obed"])
+@bot.message_handler(commands=["обед", "obed"])
 def obed_command(message):
     if message.chat.id == ADMIN_CHAT_ID:
         return
     handle_break_request(message)
 
-@bot.message_handler(commands=["restart"])
+@bot.message_handler(commands=["restart", "рестарт"])
 def restart_main(message):
     if message.chat.id == ADMIN_CHAT_ID:
         return
@@ -530,46 +441,45 @@ def restart_main(message):
         chat_data[chat_id]['shift_start'] = datetime.datetime.now(moscow_tz)
         bot.send_message(chat_id, "🔄 Смена перезапущена. Жду нового голосового для назначения главного!")
 
-def get_reminder_phrase():
-    return random.choice(soviet_phrases["voice_reminder"])
+@bot.message_handler(func=lambda m: m.text)
+def mark_duty_and_return_if_needed(message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    username = get_username(message)
+    now = datetime.datetime.now(moscow_tz)
+    if chat_id in chat_data and chat_data[chat_id].get('duty_check_time'):
+        if now - chat_data[chat_id]['duty_check_time'] < datetime.timedelta(minutes=31):
+            chat_data[chat_id]['duty_confirmed'] = True
+    user = chat_data.get(chat_id, {}).get('users', {}).get(user_id)
+    if user and user.get('waiting_return_confirm'):
+        lowered = message.text.lower()
+        if any(word in lowered for word in RETURN_CONFIRM_WORDS):
+            user['on_break'] = False
+            user['waiting_return_confirm'] = False
+            user['reminded'] = False
+            user['remind_return_time'] = None
+            bot.send_message(chat_id, random.choice(soviet_phrases["return_success"]).format(username=username))
+            if (now - user['break_start_time']).total_seconds() / 60 > BREAK_DURATION_MINUTES:
+                user['late_returns'] += 1
 
-def check_users_activity():
-    for chat_id, data in chat_data.items():
-        main_id = data.get('main_id')
-        if not main_id:
-            continue
-        user = data['users'].get(main_id)
-        if not user:
-            continue
-        now = datetime.datetime.now(moscow_tz)
-        if user.get('on_break'):
-            minutes_on_break = (now - user['break_start_time']).total_seconds() / 60
-            if minutes_on_break > BREAK_DURATION_MINUTES and not user.get('waiting_return_confirm'):
-                phrase = random.choice(soviet_phrases["return_demand"])
-                bot.send_message(chat_id, f"{user['username']}, {phrase}")
-                user['reminded'] = True
-                user['waiting_return_confirm'] = True
-                user['remind_return_time'] = now
-                continue
-        if user.get('waiting_return_confirm'):
-            remind_time = user.get('remind_return_time')
-            if remind_time and (now - remind_time).total_seconds() / 60 > WAIT_RETURN_CONFIRM_MINUTES:
-                phrase = random.choice(soviet_phrases["return_demand_hard"])
-                bot.send_message(chat_id, f"{user['username']}, {phrase}")
-                user['remind_return_time'] = now
-            continue
-        if 'last_voice_time' in user:
-            minutes_passed = (now - user['last_voice_time']).total_seconds() / 60
-            if minutes_passed > VOICE_TIMEOUT_MINUTES:
-                if not user.get('last_remind_time') or (now - user['last_remind_time']).total_seconds() / 60 >= REMIND_EACH_MINUTES:
-                    if random.random() < 0.5:
-                        phrase = random.choice(soviet_phrases["scary_reminder"])
-                    else:
-                        phrase = get_reminder_phrase()
-                    bot.send_message(chat_id, f"{user['username']}, {phrase}")
-                    user['last_remind_time'] = now
-            else:
-                user['last_remind_time'] = None
+@bot.message_handler(commands=["промежуточный", "promezhut"])
+def send_interim_report(message):
+    chat_id = message.chat.id
+    if chat_id not in chat_data:
+        bot.send_message(chat_id, "Нет данных по смене в этом чате.")
+        return
+    report_lines = get_report_lines(chat_id, chat_data[chat_id])
+    bot.send_message(chat_id, "\n".join(report_lines))
+
+@bot.message_handler(commands=["отчет", "otchet"])
+def send_manual_admin_report(message):
+    if message.chat.id == ADMIN_CHAT_ID:
+        send_admin_summary()
+        bot.reply_to(message, "Отчёт по смене отправлен руководству.")
+    else:
+        send_end_of_shift_reports()
+        send_admin_summary()
+        bot.reply_to(message, "Отчёт по смене отправлен в этот чат и руководству.")
 
 def get_report_lines(chat_id, data):
     main_id = data.get('main_id')
@@ -592,15 +502,6 @@ def get_report_lines(chat_id, data):
         f"⏳ Задержек после перерыва: {late_returns}",
     ]
     return report_lines
-
-@bot.message_handler(commands=["промежуточный", "promezhut"])
-def send_interim_report(message):
-    chat_id = message.chat.id
-    if chat_id not in chat_data:
-        bot.send_message(chat_id, "Нет данных по смене в этом чате.")
-        return
-    report_lines = get_report_lines(chat_id, chat_data[chat_id])
-    bot.send_message(chat_id, "\n".join(report_lines))
 
 def send_end_of_shift_reports():
     now = datetime.datetime.now(moscow_tz)
@@ -703,16 +604,6 @@ def send_admin_summary():
         logging.error(f"Admin summary error: {e}")
     shift_reports.clear()
 
-@bot.message_handler(commands=["отчет", "otchet"])
-def send_manual_admin_report(message):
-    if message.chat.id == ADMIN_CHAT_ID:
-        send_admin_summary()
-        bot.reply_to(message, "Отчёт по смене отправлен руководству.")
-    else:
-        send_end_of_shift_reports()
-        send_admin_summary()
-        bot.reply_to(message, "Отчёт по смене отправлен в этот чат и руководству.")
-
 def duty_check_reminder():
     now = datetime.datetime.now(moscow_tz)
     for chat_id in chat_data:
@@ -740,6 +631,44 @@ def run_scheduler():
     while True:
         schedule.run_pending()
         time.sleep(1)
+
+def check_users_activity():
+    for chat_id, data in chat_data.items():
+        main_id = data.get('main_id')
+        if not main_id:
+            continue
+        user = data['users'].get(main_id)
+        if not user:
+            continue
+        now = datetime.datetime.now(moscow_tz)
+        if user.get('on_break'):
+            minutes_on_break = (now - user['break_start_time']).total_seconds() / 60
+            if minutes_on_break > BREAK_DURATION_MINUTES and not user.get('waiting_return_confirm'):
+                phrase = random.choice(soviet_phrases["return_demand"])
+                bot.send_message(chat_id, f"{user['username']}, {phrase}")
+                user['reminded'] = True
+                user['waiting_return_confirm'] = True
+                user['remind_return_time'] = now
+                continue
+        if user.get('waiting_return_confirm'):
+            remind_time = user.get('remind_return_time')
+            if remind_time and (now - remind_time).total_seconds() / 60 > WAIT_RETURN_CONFIRM_MINUTES:
+                phrase = random.choice(soviet_phrases["return_demand_hard"])
+                bot.send_message(chat_id, f"{user['username']}, {phrase}")
+                user['remind_return_time'] = now
+            continue
+        if 'last_voice_time' in user:
+            minutes_passed = (now - user['last_voice_time']).total_seconds() / 60
+            if minutes_passed > VOICE_TIMEOUT_MINUTES:
+                if not user.get('last_remind_time') or (now - user['last_remind_time']).total_seconds() / 60 >= REMIND_EACH_MINUTES:
+                    if random.random() < 0.5:
+                        phrase = random.choice(soviet_phrases["scary_reminder"])
+                    else:
+                        phrase = random.choice(soviet_phrases["voice_reminder"])
+                    bot.send_message(chat_id, f"{user['username']}, {phrase}")
+                    user['last_remind_time'] = now
+            else:
+                user['last_remind_time'] = None
 
 if __name__ == '__main__':
     logging.info("🤖 Бот запущен. Ожидание голосовых для назначения главного на смене... 🎙️")
