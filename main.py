@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Финальная версия бота с разделением интерфейса для админов и сотрудников.
-- Админы получают интерактивное inline-меню.
-- Сотрудники используют текстовые команды.
-- Добавлена команда /сводка для личной статистики.
-- Добавлена команда /analyze для общего рейтинга сотрудников.
+Финальная версия бота:
+- Без меню, управление только текстовыми командами.
+- Разделение прав для админов и сотрудников.
+- Ежедневный отчет в 10:00 МСК.
+- Команды для общей и личной статистики.
 """
 
 import logging
@@ -25,13 +25,13 @@ from typing import Dict
 try:
     from phrases import (
         soviet_phrases,
-        BREAK_KEYWORDS, RETURN_CONFIRM_WORDS, ACHIEVEMENTS
+        BREAK_KEYWORDS, RETURN_CONFIRM_WORDS
     )
 except ImportError:
     logging.warning("Файл 'phrases.py' не найден. Используются значения по умолчанию.")
     BREAK_KEYWORDS = ["перерыв", "отдых"]
     RETURN_CONFIRM_WORDS = ["вернулся", "на месте"]
-    soviet_phrases = {"too_short": ["Слишком коротко!"], "accept": ["Принято."], "not_your_menu": ["Не для вас."]}
+    soviet_phrases = {"too_short": ["Слишком коротко!"], "accept": ["Принято."]}
 
 # ========================================
 #           НАСТРОЙКИ И ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
@@ -43,6 +43,7 @@ if not BOT_TOKEN:
     raise RuntimeError("Не задан BOT_TOKEN в переменных окружения.")
 
 BOSS_ID = 196614680
+ADMIN_REPORT_CHAT_ID = -1002645821302
 STATS_FILE = 'user_stats.csv'
 
 # Параметры смены
@@ -62,6 +63,7 @@ chat_data: Dict[int, dict] = {}
 # ========================================
 
 def load_user_stats() -> Dict[int, Dict]:
+    """Загружает общую статистику пользователей из CSV файла."""
     stats = {}
     if not os.path.exists(STATS_FILE):
         with open(STATS_FILE, 'w', newline='', encoding='utf-8') as f:
@@ -84,6 +86,7 @@ def load_user_stats() -> Dict[int, Dict]:
     return stats
 
 def save_user_stats(all_stats: Dict[int, Dict]):
+    """Сохраняет общую статистику пользователей в CSV файл."""
     try:
         with open(STATS_FILE, mode='w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
@@ -94,6 +97,7 @@ def save_user_stats(all_stats: Dict[int, Dict]):
         logging.error(f"Ошибка при сохранении файла статистики: {e}")
 
 def update_historical_stats(user_id: int, username: str, shift_data: dict):
+    """Обновляет историческую статистику пользователя по итогам смены."""
     all_stats = load_user_stats()
     if user_id not in all_stats:
         all_stats[user_id] = {'username': username, 'total_shifts': 0, 'total_voices': 0, 'total_breaks': 0, 'total_lates': 0}
@@ -135,7 +139,7 @@ def init_user_data(user_id, username):
         'username': username, 'count': 0, 'on_break': False, 'breaks_count': 0,
         'late_returns': 0, 'last_voice_time': None, 'last_break_time': None,
         'reminder_sent_at': None, 'voice_deltas': [], 'voice_durations': [],
-        'break_start_time': None, 'menu_message_id': None
+        'break_start_time': None
     }
 
 def handle_user_return(chat_id, user_id):
@@ -152,51 +156,6 @@ def handle_user_return(chat_id, user_id):
         bot.send_message(chat_id, f"✅ {user['username']}, с возвращением! Вы опоздали на {int(break_duration_minutes - BREAK_DURATION_MINUTES)} мин.")
     else:
         bot.send_message(chat_id, f"👍 {user['username']}, с возвращением! Молодец, что вернулись вовремя.")
-
-    if is_admin(user_id, chat_id):
-        send_or_update_menu(chat_id, user_id)
-
-# ========================================
-#           ЛОГИКА INLINE МЕНЮ (ТОЛЬКО ДЛЯ АДМИНОВ)
-# ========================================
-
-def get_menu_text(user_data: dict) -> str:
-    if user_data.get('on_break'):
-        break_end_time = user_data['break_start_time'] + datetime.timedelta(minutes=BREAK_DURATION_MINUTES)
-        return f"☕️ *На перерыве.* Ведущий: {user_data['username']}\nВернуться в: {break_end_time.strftime('%H:%M:%S')}"
-    else:
-        return f"🎤 *На смене.* Ведущий: {user_data['username']}\nГС: {user_data['count']} | Перерывы: {user_data['breaks_count']}"
-
-def create_main_inline_keyboard() -> types.InlineKeyboardMarkup:
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("☕️ Уйти/Вернуться", callback_data="toggle_break"),
-        types.InlineKeyboardButton("📊 Сводка смены", callback_data="shift_summary")
-    )
-    return markup
-
-def send_or_update_menu(chat_id: int, user_id: int):
-    if not is_admin(user_id, chat_id): return
-
-    data = chat_data.get(chat_id, {})
-    user_data = data.get('users', {}).get(user_id)
-    if not user_data: return
-
-    menu_text = get_menu_text(user_data)
-    keyboard = create_main_inline_keyboard()
-    menu_message_id = user_data.get('menu_message_id')
-
-    try:
-        if menu_message_id:
-            bot.edit_message_text(chat_id=chat_id, message_id=menu_message_id, text=menu_text, reply_markup=keyboard)
-        else:
-            msg = bot.send_message(chat_id, menu_text, reply_markup=keyboard)
-            user_data['menu_message_id'] = msg.message_id
-    except Exception as e:
-        logging.error(f"Не удалось обновить меню в чате {chat_id}: {e}")
-        if 'message to edit not found' in str(e).lower() or 'message not found' in str(e).lower():
-             msg = bot.send_message(chat_id, menu_text, reply_markup=keyboard)
-             user_data['menu_message_id'] = msg.message_id
 
 # ========================================
 #           ОСНОВНЫЕ КОМАНДЫ
@@ -221,12 +180,7 @@ def handle_start(message):
 
     chat_data[chat_id]['main_id'] = from_user.id
     chat_data[chat_id]['main_username'] = username
-    
-    if is_admin(from_user.id, chat_id):
-        bot.send_message(chat_id, f"👑 {username}, вы заступили на смену! Ниже ваш админ-пульт.")
-        send_or_update_menu(chat_id, from_user.id)
-    else:
-        bot.send_message(chat_id, f"👑 {username}, вы заступили на смену! Используйте текстовые команды для управления (`перерыв`, `на месте`).")
+    bot.send_message(chat_id, f"👑 {username}, вы заступили на смену! Удачи!")
 
 @bot.message_handler(commands=['check', 'промежуточный'])
 @admin_required
@@ -264,7 +218,6 @@ def my_total_stats(message):
 @bot.message_handler(commands=['analyze'])
 @admin_required
 def admin_analyze_all_users(message):
-    """(Только для админов) Показывает общую сводку-рейтинг по всем сотрудникам."""
     all_stats = load_user_stats()
 
     if not all_stats:
@@ -345,18 +298,15 @@ def handle_voice_message(message):
     if "accept" in soviet_phrases:
         bot.reply_to(message, random.choice(soviet_phrases["accept"]))
 
-    main_id = chat_data[chat_id].get('main_id')
-    if main_id is None:
+    if chat_data[chat_id].get('main_id') is None:
         chat_data[chat_id]['main_id'] = user_id
         chat_data[chat_id]['main_username'] = username
-        if is_admin(user_id, chat_id):
-            bot.send_message(chat_id, f"👑 {username} становится главным, записав первое ГС! Ниже ваш админ-пульт.")
-            send_or_update_menu(chat_id, user_id)
-        else:
-            bot.send_message(chat_id, f"👑 {username} становится главным, записав первое ГС!")
-    
-    if main_id == user_id and is_admin(user_id, chat_id):
-        send_or_update_menu(chat_id, user_id)
+        bot.send_message(chat_id, f"👑 {username} становится главным, записав первое ГС!")
+
+@bot.message_handler(commands=['перерыв'])
+def handle_break_command(message):
+    """Обрабатывает команду /перерыв."""
+    handle_break_request(message)
 
 @bot.message_handler(func=lambda m: m.text and any(word in m.text.lower() for word in BREAK_KEYWORDS))
 def handle_break_request(message):
@@ -383,57 +333,11 @@ def handle_break_request(message):
     })
     bot.reply_to(message, f"✅ Перерыв на {BREAK_DURATION_MINUTES} минут начат.")
     
-    if is_admin(user_id, chat_id):
-        send_or_update_menu(chat_id, user_id)
-
 @bot.message_handler(func=lambda m: m.text and any(word in m.text.lower() for word in RETURN_CONFIRM_WORDS))
 def handle_return_message(message):
     user_id = message.from_user.id
     if chat_data.get(message.chat.id, {}).get('main_id') == user_id:
         handle_user_return(message.chat.id, user_id)
-
-# ========================================
-#           ОБРАБОТЧИК КНОПОК (ДЛЯ АДМИНОВ)
-# ========================================
-
-@bot.callback_query_handler(func=lambda call: True)
-def handle_callback_query(call):
-    chat_id = call.message.chat.id
-    user_id = call.from_user.id
-    data = chat_data.get(chat_id, {})
-    main_id = data.get('main_id')
-
-    if user_id != main_id:
-        bot.answer_callback_query(call.id, text=random.choice(soviet_phrases.get("not_your_menu", ["Не для вас."])), show_alert=True)
-        return
-    
-    user_data = data.get('users', {}).get(user_id)
-    if not user_data:
-        bot.answer_callback_query(call.id, "Ошибка: не найдены данные пользователя.")
-        return
-    
-    if call.data == 'toggle_break':
-        if user_data.get('on_break'):
-            # Возвращаемся с перерыва
-            handle_user_return(chat_id, user_id)
-            bot.answer_callback_query(call.id, "С возвращением!")
-            return
-        else:
-            # Уходим на перерыв
-            last_break = user_data.get('last_break_time')
-            if last_break and (datetime.datetime.now(moscow_tz) - last_break).total_seconds() / 60 < BREAK_DELAY_MINUTES:
-                remaining = int(BREAK_DELAY_MINUTES - (datetime.datetime.now(moscow_tz) - last_break).total_seconds() / 60)
-                bot.answer_callback_query(call.id, f"Еще рано! Перерыв через {remaining} мин.", show_alert=True)
-                return
-            user_data.update({'on_break': True, 'break_start_time': datetime.datetime.now(moscow_tz), 'last_break_time': datetime.datetime.now(moscow_tz), 'breaks_count': user_data.get('breaks_count', 0) + 1})
-            bot.answer_callback_query(call.id, f"Перерыв на {BREAK_DURATION_MINUTES} минут начат.")
-
-    elif call.data == 'shift_summary':
-        report_lines = get_report_lines(chat_id, data)
-        bot.answer_callback_query(call.id)
-        bot.send_message(chat_id, "\n".join(report_lines), reply_to_message_id=call.message.message_id)
-
-    send_or_update_menu(chat_id, user_id)
 
 # ========================================
 #           ПЛАНИРОВЩИК И ОТЧЕТЫ
@@ -475,6 +379,12 @@ def get_report_lines(chat_id, data):
         f"⏳ Задержек после перерыва: {user['late_returns']}"
     ]
 
+def get_chat_title(chat_id: int) -> str:
+    try:
+        return bot.get_chat(chat_id).title or str(chat_id)
+    except Exception:
+        return str(chat_id)
+
 def send_end_of_shift_reports():
     logging.info("Начало отправки итоговых отчетов...")
     for chat_id, data in list(chat_data.items()):
@@ -488,18 +398,21 @@ def send_end_of_shift_reports():
         report_lines[0] = f"📋 #Итоговый_Отчет_Смены ({data.get('shift_start', datetime.datetime.now(moscow_tz)).strftime('%d.%m.%Y')})"
         
         try:
+            # Отправляем отчет в основной чат
             bot.send_message(chat_id, "\n".join(report_lines))
-            if main_user_data.get('menu_message_id'):
-                bot.delete_message(chat_id, main_user_data['menu_message_id'])
+            # Дублируем отчет в админский чат, если он не совпадает с основным
+            if ADMIN_REPORT_CHAT_ID and chat_id != ADMIN_REPORT_CHAT_ID:
+                bot.send_message(ADMIN_REPORT_CHAT_ID, "\n".join(report_lines))
         except Exception as e:
-            logging.error(f"Не удалось отправить/удалить сообщение в чате {chat_id}: {e}")
+            logging.error(f"Не удалось отправить отчет в чат {chat_id}: {e}")
             
+    # Очищаем данные только для завершенных смен
     chat_data.clear()
     logging.info("Данные смены очищены.")
 
 def run_scheduler():
     schedule.every(1).minutes.do(check_users_activity)
-    schedule.every().day.at("23:50", "Europe/Moscow").do(send_end_of_shift_reports)
+    schedule.every().day.at("10:00", "Europe/Moscow").do(send_end_of_shift_reports)
     
     while True:
         schedule.run_pending()
@@ -509,7 +422,7 @@ def run_scheduler():
 #           ЗАПУСК БОТА
 # ========================================
 if __name__ == '__main__':
-    logging.info("🤖 Бот с разделением интерфейсов запущен...")
+    logging.info("🤖 Бот (версия без меню) запущен...")
     threading.Thread(target=run_scheduler, daemon=True).start()
     while True:
         try:
