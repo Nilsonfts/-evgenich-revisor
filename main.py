@@ -203,8 +203,61 @@ soviet_phrases = {
         "😜 Молодец. Но только попробуй уйти в тень.",
         "🚀 Поехали дальше! Эфир любит активных.",
         "💪 Вот так бы всегда. Но я всё равно слежу.",
+    ],
+    "praise": [
+        "🥳 Вот теперь молодец! Так держать!",
+        "🚀 Отлично! Возможен бонус.",
+        "🔥 Вот теперь руководство довольно.",
+        "🌟 Такими темпами и до премии недалеко.",
+        "🎉 Вот это результат! Бери пример с себя.",
+        "💪 Идеальная смена — так и надо.",
+        "🍀 Не расслабляйся, держи темп.",
+        "😉 Руководство увидело, что ты можешь.",
+        "🦸‍♂️ Ведущий, вот так держать.",
+        "🕺 За такие голосовые не стыдно отчитаться.",
+    ],
+    "return_success": [
+        "✅ Вернулся? Работать! Перерыв окончен.",
+        "👍 Теперь давай голосовое, не тяни.",
+        "👏 Время снова доказывать свою полезность.",
+        "🎩 Перерыв закончился — эфир ждёт.",
+        "🕺 Быстро в строй, {username}!",
+        "🏅 Теперь без оправданий, работаем.",
+        "🎯 Эфир не ждёт — пора в бой.",
+        "🌞 Жду текст ведущего, не расслабляйся.",
+        "🛠️ Перерыв был, теперь за работу.",
+        "🚦 Работать, работать и ещё раз работать.",
     ]
 }
+
+duty_call_phrases = [
+    "👀 Кто сегодня за текст ведущего отвечает? Срочно отметься!",
+    "🎤 Кто тут главный? Жду твоего голосового или сообщения!",
+    "📣 Эй! Кто сегодня командует эфиром? Не молчать!",
+    "⏰ 20:00! Кто отвечает за текст ведущего? Быстро в чат!",
+    "🕵️‍♂️ Где главный смены? Не прячься, покажи себя!",
+    "🚨 Кто несёт ответственность за эфир? Голосовое — сюда!",
+    "🦾 Кто сегодня держит эфир в тонусе? Жду отклика!",
+    "👋 Кто главный? Молчание — не вариант!",
+    "😈 Не вижу ответственных! Кто сегодня рулит?",
+    "📝 Кто за текст ведущего? Без ответственного смена не начнётся!",
+    "📢 Жду отметки — кто сегодня отвечает за эфир?",
+    "🤷‍♂️ Кто-то должен взять ответственность! Кто?",
+]
+
+duty_late_phrases = [
+    "😡 Почему не отметился вовремя? Будешь объясняться!",
+    "⏰ 20:30 прошло, а главного не видно! Опоздание — минус к репутации!",
+    "🛑 Опять проспал? В следующий раз будь оперативней!",
+    "😤 Не успел вовремя? За это можно и по жопе получить.",
+    "🚨 Смена без ответственного — сразу провал! Где ты был?",
+    "😱 До последнего тянул? Так дело не пойдёт!",
+    "🤬 Ты что, забыл про смену? Неуважение к эфиру!",
+    "👎 Следующий раз опоздаешь — расскажешь начальству.",
+    "🔥 Не повторяй это — в следующий раз будет жёстче.",
+    "🥵 Не успел отметиться — не жди пощады.",
+    "📉 За такие опоздания премии не бывает.",
+]
 
 BREAK_KEYWORDS = [
     "перерыв", "перекур", "покурить", "я на перерыв", "я на обед", "обед", "я кушать",
@@ -233,11 +286,9 @@ def get_chat_title(chat_id):
 
 @bot.message_handler(commands=["start"])
 def send_welcome(message):
-    # Автоматический старт
     if message.chat.id == ADMIN_CHAT_ID:
         return
     if message.text.strip().lower().startswith("/start @"):
-        # Ручное назначение главного по тегу - см. /start @username
         match = re.match(r'/start\s+@([a-zA-Z0-9_]+)', message.text.strip())
         if match:
             requested_username = "@" + match.group(1)
@@ -273,17 +324,19 @@ def handle_voice_message(message):
     if user_id not in users:
         users[user_id] = {'username': username, 'count': 0, 'reminded': False, 'on_break': False, 'breaks_count': 0, 'late_returns': 0, 'last_remind_time': None}
     user = users[user_id]
-    # НЕ засчитываем голосовое короче 7 секунд!
     voice_duration = message.voice.duration
     if voice_duration < MIN_VOICE_SECONDS:
         bot.send_message(chat_id, random.choice(soviet_phrases["too_short"]))
         return
-
     user['count'] += 1
     user['last_voice_time'] = now
     user['reminded'] = False
     user['last_remind_time'] = None
     chat_data[chat_id]['chat_title'] = get_chat_title(chat_id)
+    # Маркируем выполнение "дежурного" если это подходящее время
+    if chat_data[chat_id].get('duty_check_time'):
+        if now - chat_data[chat_id]['duty_check_time'] < datetime.timedelta(minutes=31):
+            chat_data[chat_id]['duty_confirmed'] = True
     if chat_data[chat_id]['main_id'] is None:
         chat_data[chat_id]['main_id'] = user_id
         chat_data[chat_id]['main_username'] = username
@@ -302,6 +355,14 @@ def handle_voice_message(message):
         user['on_break'] = False
         bot.send_message(chat_id, random.choice(soviet_phrases["return_success"]).format(username=username))
     logging.info(f"🎧 Голосовое от {username} в чате {chat_id}. Всего: {users[user_id]['count']}")
+
+@bot.message_handler(func=lambda m: m.text and m.chat.id != ADMIN_CHAT_ID)
+def mark_duty_if_needed(message):
+    chat_id = message.chat.id
+    now = datetime.datetime.now(moscow_tz)
+    if chat_id in chat_data and chat_data[chat_id].get('duty_check_time'):
+        if now - chat_data[chat_id]['duty_check_time'] < datetime.timedelta(minutes=31):
+            chat_data[chat_id]['duty_confirmed'] = True
 
 def break_requested(text):
     lowered = text.lower()
@@ -530,10 +591,30 @@ def send_manual_admin_report(message):
         send_admin_summary()
         bot.reply_to(message, "Отчёт по смене отправлен в этот чат и руководству.")
 
+def duty_check_reminder():
+    now = datetime.datetime.now(moscow_tz)
+    for chat_id in chat_data:
+        bot.send_message(chat_id, random.choice(duty_call_phrases))
+        chat_data[chat_id]['duty_check_time'] = now
+        chat_data[chat_id]['duty_confirmed'] = False
+
+def duty_check_late():
+    for chat_id, data in chat_data.items():
+        if data.get('duty_check_time') and not data.get('duty_confirmed'):
+            if data.get('main_id'):
+                username = data['users'][data['main_id']]['username']
+                bot.send_message(chat_id, f"{username}, {random.choice(duty_late_phrases)}")
+            else:
+                bot.send_message(chat_id, random.choice(duty_late_phrases))
+            data['duty_check_time'] = None
+            data['duty_confirmed'] = False
+
 def run_scheduler():
     schedule.every(1).minutes.do(check_users_activity)
     schedule.every().day.at("01:01").do(send_end_of_shift_reports)
     schedule.every().day.at("09:00").do(send_admin_summary)
+    schedule.every().day.at("20:00").do(duty_check_reminder)
+    schedule.every().day.at("20:31").do(duty_check_late)
     while True:
         schedule.run_pending()
         time.sleep(1)
