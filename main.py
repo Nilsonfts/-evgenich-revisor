@@ -1,6 +1,3 @@
-Here is the unified, canonical final version of the bot code, which integrates all the implemented mechanics from the provided snippets.
-
-```python
 # -*- coding: utf-8 -*-
 """
 Каноничная финальная версия бота, включающая все реализованные механики:
