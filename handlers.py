@@ -3,46 +3,91 @@
 Этот файл содержит все обработчики сообщений и кнопок (хендлеры) для бота.
 Он импортирует необходимые функции и переменные из других модулей.
 """
-
 import logging
 import os
 import datetime
 import random
 import pytz
 import threading
+import time
 import pandas as pd
 from telebot import types
 from collections import Counter
 
-# Импорты из наших собственных модулей (мы создадим их на следующих шагах)
-from config import (
-    BOSS_ID, EXPECTED_VOICES_PER_SHIFT, VOICE_COOLDOWN_SECONDS,
-    VOICE_MIN_DURATION_SECONDS, BREAK_KEYWORDS, RETURN_CONFIRM_WORDS,
-    BREAK_DURATION_MINUTES, BREAK_DELAY_MINUTES, VOICE_TIMEOUT_MINUTES,
-    AD_TEMPLATES_FILE
-)
-from state import chat_data, user_history, ad_templates, user_states, chat_configs
-from g_sheets import get_sheet, append_shift_to_google_sheet
+# Импорты из наших собственных модулей
+from config import *
+from state import *
+from g_sheets import get_sheet
 from utils import (
     is_admin, admin_required, get_username, get_chat_title,
     init_user_data, init_shift_data, handle_user_return,
-    save_history_event, analyze_voice_content, save_json_data
+    save_history_event, save_json_data, generate_detailed_report
 )
-# Импортируем фразы
-try:
-    from phrases import soviet_phrases
-except ImportError:
-    # Заглушка, если файл phrases.py отсутствует
-    soviet_phrases = {
-        "accept": ["Принято."], "too_short": ["Слишком коротко!"],
-        "voice_reminder": ["Вы давно не выходили в эфир."],
-        "return_demand": ["Пора возвращаться к работе!"]
-    }
+from scheduler import send_end_of_shift_report_for_chat
 
-# --- Основная функция для регистрации всех обработчиков ---
+# Используем openai, если он установлен
+try:
+    import openai
+    client = openai.OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY and openai else None
+except ImportError:
+    client = None
+
 
 def register_handlers(bot):
     """Регистрирует все обработчики сообщений и колбэков для бота."""
+
+    # ========================================
+    #   ВНУТРЕННИЕ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+    # ========================================
+    def analyze_voice_thread(audio_path: str, user_data: dict, chat_id: int):
+        """Анализирует аудио в отдельном потоке, чтобы не блокировать бота."""
+        if not client or not ad_templates:
+            if os.path.exists(audio_path): os.remove(audio_path)
+            return
+
+        chat_config = chat_configs.get(chat_id, {})
+        brand, city = chat_config.get("brand"), chat_config.get("city")
+        if not brand or not city:
+            if os.path.exists(audio_path): os.remove(audio_path)
+            return
+
+        templates_for_location = ad_templates.get(brand, {}).get(city)
+        if not templates_for_location:
+            if os.path.exists(audio_path): os.remove(audio_path)
+            return
+
+        try:
+            with open(audio_path, "rb") as audio_file:
+                transcript = client.audio.transcriptions.create(model="whisper-1", file=audio_file)
+            
+            recognized_text = transcript.text
+            if not recognized_text.strip(): return
+
+            system_prompt = "Ты — ассистент, который находит в тексте диктора упоминания рекламных шаблонов из списка. В ответ верни названия ВСЕХ подходящих шаблонов, каждое с новой строки. Если совпадений нет, верни 'None'."
+            ad_list_for_prompt = "\n".join([f"- {name}: '{text}'" for name, text in templates_for_location.items()])
+            user_prompt = f"Текст диктора: '{recognized_text}'.\n\nСписок шаблонов:\n{ad_list_for_prompt}\n\nКакие шаблоны были упомянуты?"
+
+            completion = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+                temperature=0
+            )
+            analysis_result_text = completion.choices[0].message.content.strip()
+
+            if analysis_result_text != 'None':
+                found_templates = [line.strip() for line in analysis_result_text.splitlines() if line.strip() in templates_for_location]
+                if found_templates:
+                    user_data['recognized_ads'].extend(found_templates)
+                    logging.info(f"GPT ({chat_id}) определил совпадения: {found_templates}")
+        except Exception as e:
+            logging.error(f"Ошибка OpenAI ({chat_id}): {e}")
+            try:
+                if BOSS_ID: bot.send_message(BOSS_ID, f"❗️ Ошибка анализа речи OpenAI в чате {get_chat_title(bot, chat_id)}:\n`{e}`")
+            except Exception as send_e:
+                logging.error(f"Не удалось отправить ЛС об ошибке: {send_e}")
+        finally:
+            if os.path.exists(audio_path):
+                os.remove(audio_path)
 
     # ========================================
     #   ОСНОВНЫЕ ОБРАБОТЧИКИ СООБЩЕНИЙ
@@ -59,7 +104,7 @@ def register_handlers(bot):
         if chat_id not in chat_data: init_shift_data(chat_id)
         if user_id not in chat_data[chat_id]['users']:
             chat_data[chat_id]['users'][user_id] = init_user_data(user_id, username)
-        
+
         is_new_main = False
         if chat_data[chat_id].get('main_id') is None:
             chat_data[chat_id]['main_id'] = user_id
@@ -70,57 +115,56 @@ def register_handlers(bot):
             if is_new_main:
                 bot.send_message(chat_id, f"👑 {username} становится главным, записав первое ГС!")
                 save_history_event(chat_id, user_id, username, "Стал главным (первое ГС)")
-            
+
             user_data = chat_data[chat_id]['users'][user_id]
-            
+
             if not is_new_main and user_data.get('last_voice_time'):
                 time_since_last = (now_moscow - user_data['last_voice_time']).total_seconds()
                 if time_since_last < VOICE_COOLDOWN_SECONDS:
                     remaining = int(VOICE_COOLDOWN_SECONDS - time_since_last)
                     bot.reply_to(message, f"Слишком часто! Пауза {remaining} сек.", disable_notification=True)
                     return
-            
+
             if message.voice.duration < VOICE_MIN_DURATION_SECONDS:
                 bot.reply_to(message, f"*{random.choice(soviet_phrases.get('too_short', ['Коротко']))}* ({message.voice.duration} сек)")
                 return
-                
+
             bot.send_message(chat_id, f"*{random.choice(soviet_phrases.get('accept', ['Принято']))}*", reply_to_message_id=message.message_id)
-            
+
             if user_data.get('last_voice_time'):
                 delta_minutes = (now_moscow - user_data['last_voice_time']).total_seconds() / 60
                 user_data['voice_deltas'].append(delta_minutes)
-                
+
             user_data['count'] += 1
             user_data['last_voice_time'] = now_moscow
             user_data['voice_durations'].append(message.voice.duration)
             user_data['voice_timeout_reminder_sent'] = False
 
-            try:
-                file_info = bot.get_file(message.voice.file_id)
-                downloaded_file = bot.download_file(file_info.file_path)
-                file_path = f"voice_{message.message_id}.ogg"
-                with open(file_path, 'wb') as new_file:
-                    new_file.write(downloaded_file)
-                threading.Thread(target=analyze_voice_content, args=(bot, file_path, user_data, chat_id)).start()
-            except Exception as e:
-                logging.error(f"Ошибка при скачивании аудиофайла: {e}")
+            if client:
+                try:
+                    file_info = bot.get_file(message.voice.file_id)
+                    downloaded_file = bot.download_file(file_info.file_path)
+                    file_path = f"voice_{message.message_id}.ogg"
+                    with open(file_path, 'wb') as new_file:
+                        new_file.write(downloaded_file)
+                    threading.Thread(target=analyze_voice_thread, args=(file_path, user_data, chat_id)).start()
+                except Exception as e:
+                    logging.error(f"Ошибка при скачивании аудиофайла: {e}")
 
     @bot.message_handler(func=lambda m: m.text and any(word in m.text.lower().split() for word in BREAK_KEYWORDS))
     def handle_break_request(message: types.Message):
+        # ... (здесь полный код handle_break_request)
         chat_id = message.chat.id
         user_id = message.from_user.id
         if chat_id > 0 or chat_data.get(chat_id, {}).get('main_id') != user_id: return
-        
         user_data = chat_data[chat_id]['users'][user_id]
         if user_data.get('on_break'):
             return bot.reply_to(message, "Вы уже на перерыве.")
-        
         now_moscow = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
         last_break = user_data.get('last_break_time')
         if last_break and (now_moscow - last_break).total_seconds() / 60 < BREAK_DELAY_MINUTES:
             remaining_time = int(BREAK_DELAY_MINUTES - (now_moscow - last_break).total_seconds() / 60)
             return bot.reply_to(message, f"Следующий перерыв можно взять через {remaining_time} мин.")
-            
         user_data.update({
             'on_break': True, 'break_start_time': now_moscow,
             'last_break_time': now_moscow, 'breaks_count': user_data['breaks_count'] + 1,
@@ -128,13 +172,12 @@ def register_handlers(bot):
         })
         bot.reply_to(message, f"✅ Перерыв на {BREAK_DURATION_MINUTES} минут начат.")
         save_history_event(chat_id, user_id, get_username(message.from_user), "Ушел на перерыв")
-        
+
     @bot.message_handler(func=lambda m: m.text and any(word in m.text.lower().split() for word in RETURN_CONFIRM_WORDS))
     def handle_return_message(message: types.Message):
         chat_id = message.chat.id
         user_id = message.from_user.id
         if chat_id > 0 or chat_data.get(chat_id, {}).get('main_id') != user_id: return
-        
         handle_user_return(bot, chat_id, user_id)
 
     # ========================================
@@ -142,20 +185,17 @@ def register_handlers(bot):
     # ========================================
     @bot.message_handler(commands=['start', 'старт'])
     def handle_start(message: types.Message):
+        # ... (здесь полный код handle_start)
         chat_id = message.chat.id
         if chat_id > 0: return bot.reply_to(message, "Эта команда работает только в групповом чате.")
-        
         from_user = message.from_user
         username = get_username(from_user)
-        
         if chat_id not in chat_data: init_shift_data(chat_id)
         if from_user.id not in chat_data[chat_id]['users']:
             chat_data[chat_id]['users'][from_user.id] = init_user_data(from_user.id, username)
-            
         if chat_data[chat_id].get('main_id') is not None:
             main_username = chat_data[chat_id].get('main_username', 'Неизвестно')
             return bot.reply_to(message, f"Смена уже занята. Текущий главный: {main_username}.")
-            
         chat_data[chat_id]['main_id'] = from_user.id
         chat_data[chat_id]['main_username'] = username
         bot.send_message(chat_id, f"👑 {username}, вы заступили на смену! Удачи!")
@@ -163,67 +203,55 @@ def register_handlers(bot):
 
     @bot.message_handler(commands=['промежуточный', 'check'])
     def handle_check(message: types.Message):
+        # ... (здесь полный код handle_check)
         chat_id = message.chat.id
         user_id = message.from_user.id
         data = chat_data.get(chat_id)
-        
         if not data or not data.get('main_id'):
             return bot.reply_to(message, "Смена в этом чате еще не началась.")
-            
         main_user_id = data['main_id']
         if user_id != main_user_id:
             return bot.reply_to(message, f"Эту команду может использовать только текущий главный на смене: {data.get('main_username')}.")
-
         main_user_data = data.get('users', {}).get(main_user_id)
         shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT)
         plan_percent = (main_user_data['count'] / shift_goal * 100) if shift_goal > 0 else 0
-        
         report_lines = [
             f"📋 *Промежуточный отчет для вас* ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})",
             f"🗣️ **Голосовых:** {main_user_data['count']} из {shift_goal} ({plan_percent:.0f}%)",
             f"☕ **Перерывов:** {main_user_data['breaks_count']}",
             f"⏳ **Опозданий с перерыва:** {main_user_data['late_returns']}"
         ]
-        
         ad_counts = Counter(main_user_data.get('recognized_ads', []))
         if ad_counts:
             report_lines.append("\n**📝 Анализ контента:**")
             for ad, count in ad_counts.items():
                 report_lines.append(f"✔️ {ad} (x{count})")
-                
         bot.reply_to(message, "\n".join(report_lines))
 
     @bot.message_handler(commands=['сводка'])
     def my_total_stats(message: types.Message):
+        # ... (здесь полный код my_total_stats)
         if not pd: return bot.reply_to(message, "Модуль для анализа данных (pandas) не загружен.")
-        
         user_id = message.from_user.id
         username = get_username(message.from_user)
         bot.reply_to(message, f"📊 Собираю вашу общую статистику из Google Таблицы, {username}. Минутку...")
-        
         worksheet = get_sheet()
         if not worksheet: return bot.send_message(message.chat.id, "Не удалось подключиться к Google Таблице.")
-            
         try:
             df = pd.DataFrame(worksheet.get_all_records())
             if df.empty or 'ID Ведущего' not in df.columns:
                 return bot.send_message(message.chat.id, "В таблице пока нет данных для анализа.")
-            
             df['ID Ведущего'] = pd.to_numeric(df['ID Ведущего'], errors='coerce')
             user_df = df[df['ID Ведущего'] == user_id].copy()
-            
             if user_df.empty:
                 return bot.send_message(message.chat.id, f"{username}, не найдено ваших смен в общей статистике.")
-            
             numeric_cols = ['Голосовых (шт)', 'Перерывов (шт)', 'Опозданий (шт)']
             for col in numeric_cols:
                 user_df[col] = pd.to_numeric(user_df[col], errors='coerce').fillna(0)
-
             total_shifts = len(user_df)
             total_voices = user_df['Голосовых (шт)'].sum()
             total_breaks = user_df['Перерывов (шт)'].sum()
             total_lates = user_df['Опозданий (шт)'].sum()
-            
             report_text = (
                 f"⭐️ **Общая статистика для {username}** ⭐️\n\n"
                 f"👑 **Всего смен отработано:** {total_shifts}\n"
@@ -239,10 +267,8 @@ def register_handlers(bot):
     @bot.message_handler(commands=['help', 'справка'])
     def handle_help(message: types.Message):
         is_user_admin = is_admin(bot, message.from_user.id, message.chat.id)
-        
         help_text_lines = [
-            "📖 *Справка по командам бота*",
-            "\n---",
+            "📖 *Справка по командам бота*", "\n---",
             "**👤 Основные команды для ведущего:**",
             "`/start` или `/старт` — Занять смену, если она свободна.",
             "`/промежуточный` или `/check` — Показать свой личный отчет по текущей смене.",
@@ -250,27 +276,22 @@ def register_handlers(bot):
             "Для перерыва просто напишите в чат `перерыв`, `обед` или `отдых`.",
             "Для возвращения — `вернулся`, `на месте`.",
         ]
-        
         if is_user_admin:
             help_text_lines.extend([
-                "\n---",
-                "**🛠️ Команды для администраторов:**",
+                "\n---", "**🛠️ Команды для администраторов:**",
                 "`/admin` — Открыть интерактивное меню для управления ботом.",
-                "Все основные действия (проверка статуса, настройка, отчеты, рассылка и т.д.) выполняются через кнопки в этом меню."
+                "Все основные действия выполняются через кнопки в этом меню."
             ])
-
         bot.reply_to(message, "\n".join(help_text_lines))
-            
+
     # ========================================
-    #   АДМИНИСТРАТИВНЫЕ ИНСТРУМЕНТЫ (МЕНЮ /admin)
+    #   АДМИНИСТРАТИВНЫЕ ИНСТРУМЕНТЫ
     # ========================================
 
     @bot.message_handler(commands=['admin'])
     @admin_required(bot)
     def handle_admin_menu(message: types.Message):
         markup = types.InlineKeyboardMarkup(row_width=2)
-        is_boss = message.from_user.id == BOSS_ID
-        
         markup.add(
             types.InlineKeyboardButton("📊 Статус смены", callback_data="admin_shift_status"),
             types.InlineKeyboardButton("📈 Общий рейтинг", callback_data="admin_analyze_all"),
@@ -281,25 +302,22 @@ def register_handlers(bot):
             types.InlineKeyboardButton("➡️ Отчет досрочно", callback_data="admin_force_report"),
             types.InlineKeyboardButton("📜 Выгрузить лог", callback_data="admin_export_history")
         )
-        if is_boss:
+        if message.from_user.id == BOSS_ID:
             markup.add(types.InlineKeyboardButton("📢 Рассылка (BOSS)", callback_data="admin_broadcast"))
-            
         bot.send_message(message.chat.id, "Добро пожаловать в панель администратора!", reply_markup=markup)
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith('admin_'))
     def handle_admin_callbacks(call: types.CallbackQuery):
         chat_id = call.message.chat.id
         user_id = call.from_user.id
-        message_id = call.message.message_id
-        
         if not is_admin(bot, user_id, chat_id):
             return bot.answer_callback_query(call.id, "⛔️ Доступ запрещен!", show_alert=True)
         
-        action = call.data.split('_', 1)[1]
-        
         bot.answer_callback_query(call.id)
-        
+        action = call.data.split('_', 1)[1]
+
         if action == 'shift_status':
+
             show_shift_status(chat_id)
         elif action == 'analyze_all':
             show_overall_rating(chat_id)
