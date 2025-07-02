@@ -34,53 +34,7 @@ except ImportError:
 
 
 def register_handlers(bot):
-    
-    
-    # ===== ОБРАБОТКА КНОПОК АДМИНИСТРАТОРА (панель "Евгенич смотрит") =====
-    @bot.callback_query_handler(func=lambda call: call.data.startswith('admin_'))
-    def handle_admin_callbacks(call: types.CallbackQuery):
-        chat_id = call.message.chat.id
-        user_id = call.from_user.id
-    
-        if not is_admin(bot, user_id, chat_id):
-            return bot.answer_callback_query(call.id, "⛔️ Доступ запрещён!", show_alert=True)
-
-    # ====== DEBUG: ловим ВСЕ callback_query, чтобы понять, что приходит ======
-    @bot.callback_query_handler(func=lambda call: True)
-    def _debug_all_callbacks(call):
-        try:
-            bot.answer_callback_query(call.id, f"DBG: {call.data}", show_alert=True)
-        except Exception:
-            pass  # на всякий случай, чтобы не падало из‑за блокировки всплывашек
-        bot.send_message(call.message.chat.id, f"🧪 DEBUG: получено callback_data → {call.data}")
-
-    
-        bot.answer_callback_query(call.id)
-        action = call.data.split('_', 1)[1]
-    
-        if action == "shift_status":
-            bot.send_message(chat_id, "📊 Статус смены будет здесь.")
-        elif action == "analyze_all":
-            bot.send_message(chat_id, "📈 Общий рейтинг будет тут.")
-        elif action == "manage_ads":
-            bot.send_message(chat_id, "📝 Управление рекламой.")
-        elif action == "find_problems":
-            bot.send_message(chat_id, "🚨 Поиск проблемных зон.")
-        elif action == "chat_setup":
-            bot.send_message(chat_id, "⚙️ Настройка чата.")
-        elif action == "restart_shift":
-            bot.send_message(chat_id, "🔄 Перезапуск смены.")
-        elif action == "force_report":
-            bot.send_message(chat_id, "➡️ Досрочный отчет.")
-        elif action == "export_history":
-            bot.send_message(chat_id, "📜 История выгружена.")
-        elif action == "broadcast":
-            bot.send_message(chat_id, "📢 Рассылка отправлена.")
-        elif action == "main_menu":
-            bot.send_message(chat_id, "🔙 Возврат в главное меню.")
-        else:
-            bot.send_message(chat_id, f"❓ Неизвестная команда: {action}")
-        """Регистрирует все обработчики сообщений и колбэков для бота."""
+    """Регистрирует все обработчики сообщений и колбэков для бота."""
 
     # ========================================
     #   ВНУТРЕННИЕ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
@@ -321,8 +275,8 @@ def register_handlers(bot):
         if is_user_admin:
             help_text_lines.extend([
                 "\n---", "**🛠️ Команды для администраторов:**",
-                "`/admin` — Открыть интерактивное меню для управления ботом.",
-                "Все основные действия выполняются через кнопки в этом меню."
+                "`/superadmin <команда>` — Выполнить команду администратора.",
+                "➡️ Для списка команд введите: `/superadmin`"
             ])
         bot.reply_to(message, "\n".join(help_text_lines))
     
@@ -393,8 +347,8 @@ def register_handlers(bot):
     #   АДМИНИСТРАТИВНЫЕ ИНСТРУМЕНТЫ И МЕНЮ
     # ========================================
 
-    # --- Хелперы для админ-меню (вложены для доступа к `bot`) ---
-    def show_shift_status(chat_id: int):
+    # --- Хелперы для админ-команд (вложены для доступа к `bot`) ---
+    def show_shift_status(chat_id: int, **kwargs):
         data = chat_data.get(chat_id)
         if not data or not data.get('main_id'):
             return bot.send_message(chat_id, "Смена в этом чате еще не началась.")
@@ -404,7 +358,7 @@ def register_handlers(bot):
         report_text = get_full_report_text(chat_id, user_data, data)
         bot.send_message(chat_id, report_text)
 
-    def show_overall_rating(chat_id: int):
+    def show_overall_rating(chat_id: int, **kwargs):
         if not pd: return bot.send_message(chat_id, "Модуль для анализа данных (pandas) не загружен.")
         bot.send_message(chat_id, "📊 Анализирую общую статистику из Google Таблицы...")
         worksheet = get_sheet()
@@ -434,7 +388,7 @@ def register_handlers(bot):
             logging.error(f"Ошибка анализа Google Sheets для /analyze: {e}")
             bot.send_message(chat_id, "Произошла ошибка при анализе данных из таблицы.")
 
-    def find_problem_zones(chat_id: int):
+    def find_problem_zones(chat_id: int, **kwargs):
         if not pd: return bot.send_message(chat_id, "Модуль для анализа данных (pandas) не загружен.")
         bot.send_message(chat_id, "🚨 Ищу проблемные зоны в Google Таблице...")
         worksheet = get_sheet()
@@ -471,7 +425,9 @@ def register_handlers(bot):
             logging.error(f"Ошибка поиска проблемных зон: {e}")
             bot.send_message(chat_id, f"Произошла ошибка при анализе: {e}")
 
-    def request_broadcast_text(chat_id: int):
+    def request_broadcast_text(chat_id: int, user_id: int, **kwargs):
+        if user_id != BOSS_ID:
+            return bot.send_message(chat_id, "⛔️ Эта команда доступна только для BOSS.")
         msg = bot.send_message(chat_id, "Введите текст для массовой рассылки всем чатам. Для отмены введите /cancel.")
         bot.register_next_step_handler(msg, process_broadcast_text)
         
@@ -493,7 +449,7 @@ def register_handlers(bot):
                 logging.error(f"Не удалось отправить рассылку в чат {chat_id_str}: {e}")
         bot.send_message(message.chat.id, f"✅ Рассылка успешно отправлена в {sent_count} из {total_chats} чатов.")
 
-    def restart_shift(chat_id: int, user_id: int):
+    def restart_shift(chat_id: int, user_id: int, **kwargs):
         if chat_id in chat_data and chat_data[chat_id].get('main_id') is not None:
             init_shift_data(chat_id)
             bot.send_message(chat_id, "🔄 Смена перезапущена. Текущий главный и план сброшены.")
@@ -501,11 +457,11 @@ def register_handlers(bot):
         else:
             bot.send_message(chat_id, "Активной смены в этом чате и так не было.")
 
-    def force_report(chat_id: int):
+    def force_report(chat_id: int, **kwargs):
         bot.send_message(chat_id, "⏳ Формирую финальный отчет досрочно...")
         send_end_of_shift_report_for_chat(bot, chat_id)
 
-    def export_history(chat_id: int):
+    def export_history(chat_id: int, **kwargs):
         history = user_history.get(chat_id)
         if not history:
             return bot.send_message(chat_id, "История событий для текущей смены пуста.")
@@ -520,7 +476,7 @@ def register_handlers(bot):
             logging.error(f"Ошибка при выгрузке истории: {e}")
             bot.send_message(chat_id, "Произошла ошибка при создании файла истории.")
 
-    def show_setup_menu(chat_id: int):
+    def show_setup_menu(chat_id: int, **kwargs):
         config = chat_configs.get(chat_id, {})
         text = (
             f"⚙️ **Настройки чата: {get_chat_title(bot, chat_id)}**\n\n"
@@ -534,18 +490,13 @@ def register_handlers(bot):
         )
         bot.send_message(chat_id, text, parse_mode="Markdown")
         
-    def show_ad_brands_menu(message: types.Message, is_main_menu: bool):
+    def show_ad_brands_menu(chat_id: int, message, **kwargs):
         markup = types.InlineKeyboardMarkup(row_width=2)
         brands = list(ad_templates.keys())
         for brand in brands:
             markup.add(types.InlineKeyboardButton(brand.upper(), callback_data=f"ad_brand_{brand}"))
         markup.add(types.InlineKeyboardButton("➕ Добавить новый бренд", callback_data="ad_addbrand_form"))
-        if is_main_menu:
-            markup.add(types.InlineKeyboardButton("« Назад в админ-меню", callback_data="admin_main_menu"))
-        try:
-            bot.edit_message_text("Выберите бренд для управления рекламой:", message.chat.id, message.message_id, reply_markup=markup)
-        except telebot.apihelper.ApiTelegramException:
-            pass
+        bot.send_message(chat_id, "Выберите бренд для управления рекламой:", reply_markup=markup)
 
     def show_ad_cities_menu(message: types.Message, brand: str):
         markup = types.InlineKeyboardMarkup(row_width=2)
@@ -578,74 +529,80 @@ def register_handlers(bot):
         markup.add(types.InlineKeyboardButton("« Назад", callback_data=f"ad_city_{brand}_{city}"))
         bot.edit_message_text("Выберите шаблон для удаления:", message.chat.id, message.message_id, reply_markup=markup)
     
-    # --- Основные обработчики команд ---
-    @bot.message_handler(commands=['admin'])
+    # --- Новый обработчик /superadmin ---
+    @bot.message_handler(commands=['superadmin'])
     @admin_required(bot)
-    def handle_admin_menu(message: types.Message):
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("📊 Статус смены", callback_data="admin_shift_status"),
-            types.InlineKeyboardButton("📈 Общий рейтинг", callback_data="admin_analyze_all"),
-            types.InlineKeyboardButton("📝 Упр. рекламой", callback_data="admin_manage_ads"),
-            types.InlineKeyboardButton("🚨 Проблемные зоны", callback_data="admin_find_problems"),
-            types.InlineKeyboardButton("⚙️ Настройка чата", callback_data="admin_chat_setup"),
-            types.InlineKeyboardButton("🔄 Перезапуск смены", callback_data="admin_restart_shift"),
-            types.InlineKeyboardButton("➡️ Отчет досрочно", callback_data="admin_force_report"),
-            types.InlineKeyboardButton("📜 Выгрузить лог", callback_data="admin_export_history")
-        )
-        if message.from_user.id == BOSS_ID:
-            markup.add(types.InlineKeyboardButton("📢 Рассылка (BOSS)", callback_data="admin_broadcast"))
-        bot.send_message(message.chat.id, "Добро пожаловать в панель администратора!", reply_markup=markup)
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith('admin_'))
-    def handle_admin_callbacks(call: types.CallbackQuery):
-        chat_id = call.message.chat.id
-        user_id = call.from_user.id
-        if not is_admin(bot, user_id, chat_id):
-            return bot.answer_callback_query(call.id, "⛔️ Доступ запрещен!", show_alert=True)
-        bot.answer_callback_query(call.id)
-        action = call.data.split('_', 1)[1]
+    def handle_superadmin(message: types.Message):
+        chat_id = message.chat.id
+        user_id = message.from_user.id
         
-        if action == 'shift_status':
-            show_shift_status(chat_id)
-        elif action == 'analyze_all':
-            show_overall_rating(chat_id)
-        elif action == 'manage_ads':
-            show_ad_brands_menu(call.message, is_main_menu=True)
-        elif action == 'find_problems':
-            find_problem_zones(chat_id)
-        elif action == 'chat_setup':
-            show_setup_menu(chat_id)
-        elif action == 'restart_shift':
-            restart_shift(chat_id, user_id)
-        elif action == 'force_report':
-            force_report(chat_id)
-        elif action == 'export_history':
-            export_history(chat_id)
-        elif action == 'broadcast':
-            if user_id != BOSS_ID:
-                return bot.answer_callback_query(call.id, "⛔️ Только для BOSS!", show_alert=True)
-            request_broadcast_text(chat_id)
-        elif action == 'main_menu':
-             try:
-                 handle_admin_menu(call.message)
-                 bot.delete_message(call.message.chat.id, call.message.message_id)
-             except Exception as e:
-                 logging.warning(f"Не удалось обработать кнопку 'назад в меню': {e}")
+        args = message.text.split()
+        
+        # Словарь для сопоставления команд и функций
+        admin_commands = {
+            "status": show_shift_status,
+            "rating": show_overall_rating,
+            "ads": show_ad_brands_menu,
+            "problems": find_problem_zones,
+            "setup": show_setup_menu,
+            "restart": restart_shift,
+            "report": force_report,
+            "log": export_history,
+            "broadcast": request_broadcast_text
+        }
+        
+        # Если команда без аргумента, показываем справку
+        if len(args) < 2:
+            help_text = [
+                "**Команды супер-администратора:**\n",
+                "`/superadmin status` — 📊 Статус текущей смены",
+                "`/superadmin rating` — 📈 Общий рейтинг сотрудников",
+                "`/superadmin ads` — 📝 Управление рекламными шаблонами (интерактивно)",
+                "`/superadmin problems` — 🚨 Поиск проблемных зон в статистике",
+                "`/superadmin setup` — ⚙️ Показать настройки чата и команды для их изменения",
+                "`/superadmin restart` — 🔄 Перезапустить смену в этом чате",
+                "`/superadmin report` — ➡️ Сформировать отчет досрочно",
+                "`/superadmin log` — 📜 Выгрузить лог событий текущей смены",
+            ]
+            if user_id == BOSS_ID:
+                 help_text.append("`/superadmin broadcast` — 📢 Сделать рассылку во все чаты (BOSS)")
+            
+            bot.reply_to(message, "\n".join(help_text))
+            return
+            
+        action = args[1].lower()
+        command_func = admin_commands.get(action)
+        
+        if command_func:
+            # Вызываем нужную функцию, передавая ей chat_id, user_id и исходное сообщение
+            command_func(chat_id=chat_id, user_id=user_id, message=message)
+        else:
+            bot.reply_to(message, f"🤷‍♂️ Неизвестная команда: `{action}`. Введите `/superadmin` для справки.")
+
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith('ad_'))
     def handle_ad_callbacks(call: types.CallbackQuery):
         if not is_admin(bot, call.from_user.id, call.message.chat.id):
             return bot.answer_callback_query(call.id, "⛔️ Доступ запрещен!", show_alert=True)
+        
+        message = call.message
+        
+        # Удаляем предыдущее сообщение с кнопками, чтобы не было путаницы
+        try:
+            bot.delete_message(message.chat.id, message.message_id)
+        except Exception as e:
+            logging.info(f"Не удалось удалить сообщение при обработке ad_callback: {e}")
+
         bot.answer_callback_query(call.id)
         parts = call.data.split('_')
         action = parts[1]
+
         if action == "brand":
             brand = parts[2]
-            show_ad_cities_menu(call.message, brand)
+            show_ad_cities_menu(message, brand)
         elif action == "city":
             brand, city = parts[2], parts[3]
-            show_ad_actions_menu(call.message, brand, city)
+            show_ad_actions_menu(message, brand, city)
         elif action == "view":
             brand, city = parts[2], parts[3]
             templates = ad_templates.get(brand, {}).get(city, {})
@@ -656,12 +613,12 @@ def register_handlers(bot):
                 for name, content in templates.items():
                     text_lines.append(f"🔹 *{name}*:\n`{content}`\n")
                 text = "\n".join(text_lines)
-            bot.send_message(call.message.chat.id, text, parse_mode="Markdown")
+            bot.send_message(message.chat.id, text, parse_mode="Markdown")
         elif action == "addform":
             brand, city = parts[2], parts[3]
-            user_id = call.message.chat.id
+            user_id = message.chat.id
             user_states[user_id] = {"state": "awaiting_ad_template", "brand": brand, "city": city}
-            bot.send_message(call.message.chat.id, "Отправьте сообщение в формате:\n\n`Название шаблона`\n`Текст шаблона...`\n\nДля отмены введите /cancel")
+            bot.send_message(message.chat.id, "Отправьте сообщение в формате:\n\n`Название шаблона`\n`Текст шаблона...`\n\nДля отмены введите /cancel")
         elif action == "delform":
             brand, city = parts[2], parts[3]
             show_templates_for_deletion(call, brand, city)
@@ -675,13 +632,10 @@ def register_handlers(bot):
                 else:
                     bot.answer_callback_query(call.id, "Ошибка сохранения!", show_alert=True)
         elif action == 'backtobrand':
-            show_ad_brands_menu(call.message, is_main_menu=False)
+            show_ad_brands_menu(chat_id=message.chat.id, message=message)
         elif action == 'backtocity':
             brand = parts[2]
-            show_ad_cities_menu(call.message, brand)
-        elif action == 'main_menu':
-            handle_admin_menu(call.message)
-            bot.delete_message(call.message.chat.id, call.message.message_id)
+            show_ad_cities_menu(message, brand)
 
     @bot.message_handler(func=lambda message: user_states.get(message.from_user.id, {}).get("state") == "awaiting_ad_template")
     def receive_ad_template_to_add(message: types.Message):
@@ -706,36 +660,12 @@ def register_handlers(bot):
         except (ValueError, KeyError):
             bot.send_message(message.chat.id, "Неверный формат. Пожалуйста, отправьте сообщение в формате:\n\n`Название шаблона`\n`Текст шаблона...`")
             if user_id in user_states: del user_states[user_id]
-
-    # === ОБРАБОТКА АДМИН-КНОПОК (с юмором от Евгенича) ===
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_"))
-    def handle_admin_callbacks(call: types.CallbackQuery):
-        chat_id = call.message.chat.id
-        user_id = call.from_user.id
-
-        if not is_admin(bot, user_id, chat_id):
-            return bot.answer_callback_query(call.id, "⛔️ Доступ запрещён!", show_alert=True)
-
-        bot.answer_callback_query(call.id)
-        action = call.data.split("_", 1)[1]
-
-        if action == "shift_status":
-            bot.send_message(chat_id, "📊 Евгенич проверил табель — все вроде на месте, но двоих видел у курилки.")
-        elif action == "analyze_all":
-            bot.send_message(chat_id, "📈 Общий рейтинг под контролем. Кто-то молодец, кто-то — так, для мебели.")
-        elif action == "manage_ads":
-            bot.send_message(chat_id, "📝 Рекламу надо крутить, как пластинку 'Комбинации' — ровно и по кайфу.")
-        elif action == "find_problems":
-            bot.send_message(chat_id, "🚨 Сейчас гляну, где завоняло... ага, вот тут косяки.")
-        elif action == "chat_setup":
-            bot.send_message(chat_id, "⚙️ Настройка — дело тонкое. Евгенич одобряет.")
-        elif action == "restart_shift":
-            bot.send_message(chat_id, "🔄 Всё по новой, как в 86-м. Смена перезапущена.")
-        elif action == "force_report":
-            bot.send_message(chat_id, "➡️ Отчёт выгружен досрочно. Не забудь отнести в партком.")
-        elif action == "export_history":
-            bot.send_message(chat_id, "📜 История сохранена. Евгенич всё видит, всё помнит.")
-        elif action == "broadcast":
-            bot.send_message(chat_id, "📢 Объявление отправлено. Теперь даже в подсобке знают.")
-        else:
-            bot.send_message(chat_id, f"❓ Евгенич не понял команду: {action}")
+            
+    # ====== DEBUG: ловим ВСЕ callback_query, чтобы понять, что приходит ======
+    @bot.callback_query_handler(func=lambda call: True)
+    def _debug_all_callbacks(call):
+        try:
+            bot.answer_callback_query(call.id, f"DBG: {call.data}", show_alert=True)
+        except Exception:
+            pass  # на всякий случай, чтобы не падало из‑за блокировки всплывашек
+        bot.send_message(call.message.chat.id, f"🧪 DEBUG: получено необработанное callback_data → {call.data}")
