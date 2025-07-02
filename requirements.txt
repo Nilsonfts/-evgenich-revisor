@@ -3,5 +3,4 @@ schedule
 pytz
 gspread
 google-auth-oauthlib
-pandas
 openai
