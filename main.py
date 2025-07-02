@@ -4,46 +4,48 @@ import threading
 import logging
 from typing import Dict, List
 
-# Импортируем все необходимое из наших новых файлов
-from config import BOT_TOKEN
+# === Импорты из внутренних модулей ===
+from config import BOT_TOKEN, CHAT_CONFIG_FILE, AD_TEMPLATES_FILE
 from state import chat_configs, ad_templates
 from utils import load_json_data
 from handlers import register_handlers
 from scheduler import run_scheduler
 
-# --- Инициализация ---
+# === Настройка логирования ===
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.FileHandler("bot.log", encoding="utf-8"), logging.StreamHandler()]
+    handlers=[
+        logging.FileHandler("bot.log", encoding="utf-8"),
+        logging.StreamHandler()
+    ]
 )
 
+# === Инициализация бота ===
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
 
+# === Загрузка всех данных при старте ===
 def load_all_data():
-    """Загружает все данные из JSON файлов при старте."""
-    from config import CHAT_CONFIG_FILE, AD_TEMPLATES_FILE
-    # Обратите внимание: мы явно передаем словари для их изменения
     chat_configs.update({int(k): v for k, v in load_json_data(CHAT_CONFIG_FILE, {}).items()})
     ad_templates.update(load_json_data(AD_TEMPLATES_FILE, {}))
-    logging.info(f"Загружено {len(chat_configs)} конфигов чатов и {len(ad_templates)} брендов с шаблонами.")
+    logging.info(f"Загружено {len(chat_configs)} конфигураций чатов.")
 
-# --- Основной блок запуска ---
-if __name__ == '__main__':
-    logging.info("🤖 Бот запускается...")
-
+# === Точка входа ===
+if __name__ == "__main__":
+    logging.info("🎙️ Запуск Telegram-бота...")
+    
     # 1. Загружаем данные
     load_all_data()
-
-    # 2. Регистрируем все обработчики, передавая им объект бота
+    
+    # 2. Регистрируем все обработчики
     register_handlers(bot)
     logging.info("✅ Обработчики успешно зарегистрированы.")
-
-    # 3. Запускаем планировщик в отдельном потоке
+    
+    # 3. Запускаем планировщик в отдельном фоновом потоке
     scheduler_thread = threading.Thread(target=run_scheduler, args=(bot,), daemon=True)
     scheduler_thread.start()
-    logging.info("⏰ Планировщик запущен.")
-
-    # 4. Запускаем бота
-    logging.info("🚀 Бот готов к работе.")
-    bot.infinity_polling(timeout=60)
+    logging.info("⏰ Планировщик запущен в фоновом режиме.")
+    
+    # 4. Запускаем основную работу бота (прослушивание сообщений)
+    logging.info("🚀 Бот готов к работе и слушает сообщения.")
+    bot.infinity_polling(timeout=60, long_polling_timeout=40)
