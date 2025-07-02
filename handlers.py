@@ -17,11 +17,11 @@ from collections import Counter
 # Импорты из наших собственных модулей
 from config import *
 from state import *
-from g_sheets import get_sheet
+from g_sheets import get_sheet, append_shift_to_google_sheet
 from utils import (
     is_admin, admin_required, get_username, get_chat_title,
     init_user_data, init_shift_data, handle_user_return,
-    save_history_event, save_json_data,
+    save_history_event, save_json_data, get_full_report_text
 )
 from scheduler import send_end_of_shift_report_for_chat
 
@@ -279,7 +279,7 @@ def register_handlers(bot):
                 "Все основные действия выполняются через кнопки в этом меню."
             ])
         bot.reply_to(message, "\n".join(help_text_lines))
-    
+
     # ========================================
     #   ОБРАБОТЧИКИ КОМАНД НАСТРОЙКИ
     # ========================================
@@ -343,37 +343,6 @@ def register_handlers(bot):
         except (IndexError, ValueError):
             bot.reply_to(message, "Неверный формат. Укажите положительное число. Пример: `/setgoal 20`")
 
-def get_full_report_text(chat_id: int, user_data: dict, data: dict) -> str:
-        """Собирает полный текстовый отчет по текущему статусу смены."""
-        shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT)
-        plan_percent = (user_data['count'] / shift_goal * 100) if shift_goal > 0 else 0
-        avg_delta = sum(user_data.get('voice_deltas', [])) / len(user_data['voice_deltas']) if user_data.get('voice_deltas') else 0
-        max_pause = max(user_data.get('voice_deltas', [0]))
-        avg_duration = sum(user_data.get('voice_durations', [])) / len(user_data['voice_durations']) if user_data.get('voice_durations') else 0
-        
-        report_lines = [
-            f"📋 **Промежуточный отчет по смене** ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})",
-            f"🎤 **Ведущий:** {user_data.get('username', 'N/A')}",
-            "\n---",
-            "**📊 Основная Статистика**",
-            f"**Голосовых:** {user_data.get('count', 0)} из {shift_goal} ({plan_percent:.0f}%)",
-            f"**Перерывов:** {user_data.get('breaks_count', 0)}",
-            f"**Опозданий:** {user_data.get('late_returns', 0)}",
-            "\n---",
-            "**📈 Аналитика Активности**",
-            f"**Средний ритм:** {avg_delta:.1f} мин/ГС" if avg_delta else "**Средний ритм:** Н/Д",
-            f"**Макс. пауза:** {max_pause:.1f} мин." if max_pause else "**Макс. пауза:** Н/Д",
-            f"**Ср. длина ГС:** {avg_duration:.1f} сек." if avg_duration else "**Ср. длина ГС:** Н/Д"
-        ]
-        
-        ad_counts = Counter(user_data.get('recognized_ads', []))
-        if ad_counts:
-            report_lines.append("\n---\n**📝 Анализ Контента**")
-            for ad, count in ad_counts.items():
-                report_lines.append(f"✔️ {ad} (x{count})")
-                
-        return "\n".join(report_lines)
-    
     # ========================================
     #   АДМИНИСТРАТИВНЫЕ ИНСТРУМЕНТЫ И МЕНЮ
     # ========================================
@@ -587,6 +556,7 @@ def get_full_report_text(chat_id: int, user_data: dict, data: dict) -> str:
     def handle_admin_callbacks(call: types.CallbackQuery):
         chat_id = call.message.chat.id
         user_id = call.from_user.id
+        message_id = call.message.message_id # Сохраняем ID сообщения
         if not is_admin(bot, user_id, chat_id):
             return bot.answer_callback_query(call.id, "⛔️ Доступ запрещен!", show_alert=True)
         bot.answer_callback_query(call.id)
@@ -612,12 +582,15 @@ def get_full_report_text(chat_id: int, user_data: dict, data: dict) -> str:
             if user_id != BOSS_ID:
                 return bot.answer_callback_query(call.id, "⛔️ Только для BOSS!", show_alert=True)
             request_broadcast_text(chat_id)
-        elif action == 'main_menu':
+        elif action == 'main_menu': # Обработка кнопки "Назад в меню"
              try:
+                 # Просто вызываем функцию, которая отправляет основное меню
                  handle_admin_menu(call.message)
-                 bot.delete_message(call.message.chat.id, call.message.message_id)
+                 # И удаляем старое сообщение с подменю
+                 bot.delete_message(chat_id, message_id)
              except Exception as e:
                  logging.warning(f"Не удалось отредактировать/удалить сообщение в admin_main_menu: {e}")
+
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith('ad_'))
     def handle_ad_callbacks(call: types.CallbackQuery):
@@ -665,7 +638,7 @@ def get_full_report_text(chat_id: int, user_data: dict, data: dict) -> str:
         elif action == 'backtocity':
             brand = parts[2]
             show_ad_cities_menu(call.message, brand)
-        elif action == 'main_menu':
+        elif action == 'main_menu': # Обработка кнопки "Назад в меню" из подменю рекламы
             handle_admin_menu(call.message)
             bot.delete_message(call.message.chat.id, call.message.message_id)
 
