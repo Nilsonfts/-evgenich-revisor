@@ -1,4 +1,4 @@
-# main.py
+# -*- coding: utf-8 -*-
 import telebot
 import threading
 import logging
@@ -30,22 +30,13 @@ def load_all_data():
     ad_templates.update(load_json_data(AD_TEMPLATES_FILE, {}))
     logging.info(f"Загружено {len(chat_configs)} конфигураций чатов.")
 
+# === Запуск фонового планировщика ===
+def start_background_tasks():
+    threading.Thread(target=run_scheduler, args=(bot,), daemon=True).start()
+
 # === Точка входа ===
 if __name__ == "__main__":
-    logging.info("🎙️ Запуск Telegram-бота...")
-    
-    # 1. Загружаем данные
     load_all_data()
-    
-    # 2. Регистрируем все обработчики
     register_handlers(bot)
-    logging.info("✅ Обработчики успешно зарегистрированы.")
-    
-    # 3. Запускаем планировщик в отдельном фоновом потоке
-    scheduler_thread = threading.Thread(target=run_scheduler, args=(bot,), daemon=True)
-    scheduler_thread.start()
-    logging.info("⏰ Планировщик запущен в фоновом режиме.")
-    
-    # 4. Запускаем основную работу бота (прослушивание сообщений)
-    logging.info("🚀 Бот готов к работе и слушает сообщения.")
-    bot.infinity_polling(timeout=60, long_polling_timeout=40)
+    start_background_tasks()
+    bot.polling(none_stop=True)
