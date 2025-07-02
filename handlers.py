@@ -1,9 +1,3 @@
-### **Файл: `handlers.py` (Полная и исправленная версия)**
-
-\<details\>
-\<summary\>Нажмите, чтобы развернуть и скопировать весь код\</summary\>
-
-```python
 # handlers.py
 """
 Этот файл содержит все обработчики сообщений и кнопок (хендлеры) для бота.
@@ -65,7 +59,7 @@ def register_handlers(bot):
         try:
             with open(audio_path, "rb") as audio_file:
                 transcript = client.audio.transcriptions.create(model="whisper-1", file=audio_file)
-            
+
             recognized_text = transcript.text
             if not recognized_text.strip(): return
 
@@ -352,7 +346,7 @@ def register_handlers(bot):
     # ========================================
     #   АДМИНИСТРАТИВНЫЕ ИНСТРУМЕНТЫ И МЕНЮ
     # ========================================
-
+    
     # --- Вложенные функции, чтобы не засорять область видимости ---
     def show_shift_status(chat_id: int):
         data = chat_data.get(chat_id)
@@ -502,7 +496,7 @@ def register_handlers(bot):
             markup.add(types.InlineKeyboardButton(brand.upper(), callback_data=f"ad_brand_{brand}"))
         markup.add(types.InlineKeyboardButton("➕ Добавить новый бренд", callback_data="ad_addbrand_form"))
         if is_main_menu:
-            markup.add(types.InlineKeyboardButton("« Назад в админ-меню", callback_data="admin_main_menu_from_ad"))
+            markup.add(types.InlineKeyboardButton("« Назад в админ-меню", callback_data="admin_main_menu"))
         try:
             bot.edit_message_text("Выберите бренд для управления рекламой:", message.chat.id, message.message_id, reply_markup=markup)
         except telebot.apihelper.ApiTelegramException:
@@ -562,6 +556,7 @@ def register_handlers(bot):
     def handle_admin_callbacks(call: types.CallbackQuery):
         chat_id = call.message.chat.id
         user_id = call.from_user.id
+        message_id = call.message.message_id # Сохраняем ID сообщения
         if not is_admin(bot, user_id, chat_id):
             return bot.answer_callback_query(call.id, "⛔️ Доступ запрещен!", show_alert=True)
         bot.answer_callback_query(call.id)
@@ -587,8 +582,15 @@ def register_handlers(bot):
             if user_id != BOSS_ID:
                 return bot.answer_callback_query(call.id, "⛔️ Только для BOSS!", show_alert=True)
             request_broadcast_text(chat_id)
-        elif action == 'main_menu_from_ad':
-             handle_admin_menu(call.message)
+        elif action == 'main_menu': # Обработка кнопки "Назад в меню"
+             try:
+                 # Просто вызываем функцию, которая отправляет основное меню
+                 handle_admin_menu(call.message)
+                 # И удаляем старое сообщение с подменю
+                 bot.delete_message(chat_id, message_id)
+             except Exception as e:
+                 logging.warning(f"Не удалось отредактировать/удалить сообщение в admin_main_menu: {e}")
+
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith('ad_'))
     def handle_ad_callbacks(call: types.CallbackQuery):
@@ -636,6 +638,10 @@ def register_handlers(bot):
         elif action == 'backtocity':
             brand = parts[2]
             show_ad_cities_menu(call.message, brand)
+        elif action == 'main_menu': # Обработка кнопки "Назад в меню" из подменю рекламы
+            handle_admin_menu(call.message)
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+
 
     @bot.message_handler(func=lambda message: user_states.get(message.from_user.id, {}).get("state") == "awaiting_ad_template")
     def receive_ad_template_to_add(message: types.Message):
