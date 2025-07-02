@@ -358,8 +358,7 @@ def analyze_voice_content(audio_path: str, chat_id: int) -> List[str]: # ИЗМ�
         except Exception as send_e:
             logging.error(f"Не удалось отправить личное сообщение об ошибке: {send_e}")
         return []
-  except Exception as e:
-
+        
 def process_audio_and_save_result(file_path, user_data, chat_id):
     try:
         # analyze_voice_content теперь возвращает список
