@@ -660,3 +660,40 @@ def register_handlers(bot):
         except (ValueError, KeyError):
             bot.send_message(message.chat.id, "Неверный формат. Пожалуйста, отправьте сообщение в формате:\n\n`Название шаблона`\n`Текст шаблона...`")
             if user_id in user_states: del user_states[user_id]
+
+
+
+# ===== ОБРАБОТКА КНОПОК АДМИНИСТРАТОРА (панель "Евгенич смотрит") =====
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_'))
+def handle_admin_callbacks(call: types.CallbackQuery):
+    chat_id = call.message.chat.id
+    user_id = call.from_user.id
+
+    if not is_admin(bot, user_id, chat_id):
+        return bot.answer_callback_query(call.id, "⛔️ Доступ запрещён!", show_alert=True)
+
+    bot.answer_callback_query(call.id)
+    action = call.data.split('_', 1)[1]
+
+    if action == "shift_status":
+        bot.send_message(chat_id, "📊 Статус смены будет здесь.")
+    elif action == "analyze_all":
+        bot.send_message(chat_id, "📈 Общий рейтинг будет тут.")
+    elif action == "manage_ads":
+        bot.send_message(chat_id, "📝 Управление рекламой.")
+    elif action == "find_problems":
+        bot.send_message(chat_id, "🚨 Поиск проблемных зон.")
+    elif action == "chat_setup":
+        bot.send_message(chat_id, "⚙️ Настройка чата.")
+    elif action == "restart_shift":
+        bot.send_message(chat_id, "🔄 Перезапуск смены.")
+    elif action == "force_report":
+        bot.send_message(chat_id, "➡️ Досрочный отчет.")
+    elif action == "export_history":
+        bot.send_message(chat_id, "📜 История выгружена.")
+    elif action == "broadcast":
+        bot.send_message(chat_id, "📢 Рассылка отправлена.")
+    elif action == "main_menu":
+        bot.send_message(chat_id, "🔙 Возврат в главное меню.")
+    else:
+        bot.send_message(chat_id, f"❓ Неизвестная команда: {action}")
