@@ -1,6 +1,8 @@
-aiogram==3.5.0
+pyTelegramBotAPI
 python-dotenv
 openai
-pyTelegramBotAPI==4.16.1
 pytz
 schedule
+gspread
+google-auth-oauthlib
+pandas
