@@ -92,3 +92,7 @@ def get_full_report_text(report_data: Dict[str, Any]) -> str:
 def get_sheet(*args, **kwargs):
     from g_sheets import get_sheet as _get_sheet
     return _get_sheet(*args, **kwargs)
+
+def get_username(user) -> str:
+    """Возвращает username или fallback-строку."""
+    return f"@{user.username}" if getattr(user, "username", None) else f"{user.first_name}"
