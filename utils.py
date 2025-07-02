@@ -141,3 +141,12 @@ def generate_detailed_report(chat_id: int, data: dict) -> list:
             report_lines.append(f"✔️ {ad} (x{count})")
             
     return report_lines
+
+def get_full_report_text(report_data: dict) -> str:
+    """Формирует красивый текстовый отчет из словаря данных."""
+    lines = ["📋 Итоговый отчёт:\n"]
+    for key, value in report_data.items():
+        if isinstance(value, float):
+            value = f"{value:.2f}"
+        lines.append(f"• {key}: {value}")
+    return "\n".join(lines)
