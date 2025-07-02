@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Финальная версия v13.0 (Полная):
-- Команда /check разделена на пользовательскую (/check) и административную (/checkadmin).
-- /checkadmin дополнительно выводит анализ контента.
-- Обновлен текст команды /help.
-- Все предыдущие функции, включая анализ речи, сохранены.
+Финальная версия v15.0 (Полная и исправленная):
+- Команда /check переименована в /промежуточный в справке.
+- Исправлена ошибка форматирования в отчетах.
+- Добавлена обратная связь при частой отправке голосовых.
+- Добавлен подсчет количества упоминаний каждой темы в анализе контента.
+- Все предыдущие функции сохранены и финализированы.
 """
 
 import logging
@@ -20,6 +21,7 @@ import telebot
 from telebot import types
 from functools import wraps
 from typing import Dict, List
+from collections import Counter
 
 # Попытка импорта ключевых библиотек
 try:
@@ -188,7 +190,8 @@ def append_shift_to_google_sheet(chat_id, data, analytical_conclusion):
     max_pause = max(user_data['voice_deltas']) if user_data['voice_deltas'] else 0
     avg_duration = sum(user_data['voice_durations']) / len(user_data['voice_durations']) if user_data['voice_durations'] else 0
     
-    recognized_ads_str = ", ".join(user_data.get('recognized_ads', [])) or "Нет данных"
+    ad_counts = Counter(user_data.get('recognized_ads', []))
+    recognized_ads_str = ", ".join([f"{ad} (x{count})" for ad, count in ad_counts.items()]) or "Нет данных"
 
     row_data = [
         data.get('shift_start', now).strftime('%d.%m.%Y'), chat_id, get_chat_title(chat_id),
@@ -306,8 +309,7 @@ def process_audio_and_save_result(file_path, user_data):
     try:
         ad_name = analyze_voice_content(file_path)
         if ad_name:
-            if ad_name not in user_data['recognized_ads']:
-                user_data['recognized_ads'].append(ad_name)
+            user_data['recognized_ads'].append(ad_name)
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)
@@ -347,10 +349,8 @@ def handle_restart(message):
     else:
         bot.reply_to(message, "Активной смены в этом чате и так не было.")
 
-# НОВАЯ ВЕРСИЯ /check
 @bot.message_handler(commands=['check', 'промежуточный'])
 def handle_check(message):
-    """Показывает личный промежуточный отчет для текущего ведущего."""
     chat_id = message.chat.id
     user_id = message.from_user.id
     data = chat_data.get(chat_id)
@@ -367,18 +367,16 @@ def handle_check(message):
     plan_percent = (main_user_data['count'] / EXPECTED_VOICES_PER_SHIFT * 100) if EXPECTED_VOICES_PER_SHIFT > 0 else 0
     
     report_text = (
-        f"📋 #Промежуточный_отчет для вас ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})\n\n"
+        f"📋 Промежуточный отчет для вас ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})\n\n"
         f"🗣️ Голосовых: {main_user_data['count']} из {EXPECTED_VOICES_PER_SHIFT} ({plan_percent:.0f}%)\n"
         f"☕ Перерывов: {main_user_data['breaks_count']}\n"
         f"⏳ Опозданий с перерыва: {main_user_data['late_returns']}"
     )
     bot.reply_to(message, report_text)
 
-# НОВАЯ КОМАНДА /checkadmin
 @bot.message_handler(commands=['checkadmin'])
 @admin_required
 def handle_checkadmin(message):
-    """(Только для админов) Показывает отчет по ведущему с анализом тем."""
     chat_id = message.chat.id
     
     try:
@@ -394,25 +392,25 @@ def handle_checkadmin(message):
 
     main_user_data = data.get('users', {}).get(data['main_id'])
     
-    # Сравниваем без учета регистра
     if main_user_data['username'].lower() != target_username.lower():
         return bot.reply_to(message, f"Указанный пользователь {target_username} не является главным на текущей смене. Сейчас на смене: {main_user_data['username']}")
 
-    # --- Генерация отчета ---
     plan_percent = (main_user_data['count'] / EXPECTED_VOICES_PER_SHIFT * 100) if EXPECTED_VOICES_PER_SHIFT > 0 else 0
+    
     report_lines = [
-        f"📋 #Промежуточный_отчет ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})",
+        f"📋 Промежуточный отчет ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})",
         f"🏢 Чат: {get_chat_title(chat_id)}",
         f"🎤 Ведущий: {main_user_data['username']}", "---",
-        f"🗣️ **Голосовых:** {main_user_data['count']} из {EXPECTED_VOICES_PER_SHIFT} ({plan_percent:.0f}%)",
-        f"☕ **Перерывов:** {main_user_data['breaks_count']}",
-        f"⏳ **Опозданий с перерыва:** {main_user_data['late_returns']}"
+        f"🗣️ Голосовых: {main_user_data['count']} из {EXPECTED_VOICES_PER_SHIFT} ({plan_percent:.0f}%)",
+        f"☕ Перерывов: {main_user_data['breaks_count']}",
+        f"⏳ Опозданий с перерыва: {main_user_data['late_returns']}"
     ]
 
-    if main_user_data.get('recognized_ads'):
-        report_lines.append("\n**Анализ контента:**")
-        for ad in main_user_data['recognized_ads']:
-            report_lines.append(f"✔️ {ad}")
+    ad_counts = Counter(main_user_data.get('recognized_ads', []))
+    if ad_counts:
+        report_lines.append("\nАнализ контента:")
+        for ad, count in ad_counts.items():
+            report_lines.append(f"✔️ {ad} (x{count})")
 
     final_report = "\n".join(report_lines)
     bot.reply_to(message, final_report)
@@ -574,7 +572,6 @@ def test_google_sheet(message):
             f"Не удалось подключиться к Google Sheets. Проверьте лог."
         )
 
-# НОВАЯ ВЕРСИЯ /help
 @bot.message_handler(commands=['help'])
 def handle_help(message):
     help_text = """
@@ -582,7 +579,7 @@ def handle_help(message):
 
 *Общие Команды*
 `/start` — Назначить себя главным на смене.
-`/check` — Показать свой промежуточный отчет (только для ведущего).
+`/промежуточный` (или `/check`) — Показать свой промежуточный отчет.
 `/сводка` — Посмотреть свою личную статистику за все время.
 `/перерыв` или `/обед` — Уйти на перерыв.
 
@@ -623,15 +620,24 @@ def handle_voice_message(message):
 
     if chat_data[chat_id]['main_id'] == user_id:
         user_data = chat_data[chat_id]['users'][user_id]
-        if user_data.get('last_voice_time') and (now - user_data['last_voice_time']).total_seconds() < VOICE_COOLDOWN_SECONDS:
-            return
+        
+        if user_data.get('last_voice_time'):
+            time_since_last = (now - user_data['last_voice_time']).total_seconds()
+            if time_since_last < VOICE_COOLDOWN_SECONDS:
+                remaining = int(VOICE_COOLDOWN_SECONDS - time_since_last)
+                bot.reply_to(message, f"Слишком часто! Следующее ГС можно записать через {remaining} сек.", disable_notification=True)
+                return
+        
         if message.voice.duration < VOICE_MIN_DURATION_SECONDS:
             bot.send_message(chat_id, f"*{random.choice(soviet_phrases['too_short'])}* ({message.voice.duration} сек)", reply_to_message_id=message.message_id)
             return
+            
         bot.send_message(chat_id, f"*{random.choice(soviet_phrases['accept'])}*", reply_to_message_id=message.message_id)
+        
         if user_data.get('last_voice_time'):
             delta_minutes = (now - user_data['last_voice_time']).total_seconds() / 60
             user_data['voice_deltas'].append(delta_minutes)
+            
         user_data['count'] += 1
         user_data['last_voice_time'] = now
         user_data['voice_durations'].append(message.voice.duration)
@@ -692,21 +698,24 @@ def generate_detailed_report(chat_id: int, data: dict) -> list:
     avg_duration = sum(user['voice_durations']) / len(user['voice_durations']) if user['voice_durations'] else 0
     plan_percent = (user['count'] / EXPECTED_VOICES_PER_SHIFT * 100) if EXPECTED_VOICES_PER_SHIFT > 0 else 0
     report = [
-        f"📋 #Итоговый_Отчет_Смены ({data.get('shift_start', now).strftime('%d.%m.%Y')})",
+        f"📋 Итоговый Отчет Смены ({data.get('shift_start', now).strftime('%d.%m.%Y')})",
         f"🏢 Чат: {get_chat_title(chat_id)}",
         f"🎤 Ведущий: {user['username']}", "---",
-        f"🗣️ **Голосовых:** {user['count']} из {EXPECTED_VOICES_PER_SHIFT} ({plan_percent:.0f}%)",
-        f"☕ **Перерывов:** {user['breaks_count']}",
-        f"⏳ **Опозданий с перерыва:** {user['late_returns']}", "---",
-        "**Статистика активности:**",
+        f"🗣️ Голосовых: {user['count']} из {EXPECTED_VOICES_PER_SHIFT} ({plan_percent:.0f}%)",
+        f"☕ Перерывов: {user['breaks_count']}",
+        f"⏳ Опозданий с перерыва: {user['late_returns']}", "---",
+        "Статистика активности:",
         f"📈 Средний ритм: {avg_delta:.1f} мин/ГС",
         f"🔇 Макс. пауза: {max_pause:.1f} мин.",
         f"📏 Ср. длина ГС: {avg_duration:.1f} сек."
     ]
-    if user.get('recognized_ads'):
-        report.append("\n**Анализ контента:**")
-        for ad in user['recognized_ads']:
-            report.append(f"✔️ {ad}")
+    
+    ad_counts = Counter(user.get('recognized_ads', []))
+    if ad_counts:
+        report.append("\nАнализ контента:")
+        for ad, count in ad_counts.items():
+            report.append(f"✔️ {ad} (x{count})")
+            
     return report
 
 def generate_analytical_summary(user_data: dict) -> str:
@@ -717,17 +726,17 @@ def generate_analytical_summary(user_data: dict) -> str:
         if max(user_data['voice_deltas']) > VOICE_TIMEOUT_MINUTES * 1.5:
             has_long_pauses = True
     if plan_percent < 50:
-        return f"❗️ **Критическое невыполнение плана ({plan_percent:.0f}%).** Требуется срочная беседа."
+        return f"❗️ Критическое невыполнение плана ({plan_percent:.0f}%). Требуется срочная беседа."
     elif plan_percent < 80 and lates > 0:
-        return f"❗️ **Системные проблемы.** План не выполнен ({plan_percent:.0f}%) и есть опоздания. Рекомендуется взять сотрудника на контроль."
+        return f"❗️ Системные проблемы. План не выполнен ({plan_percent:.0f}%) и есть опоздания. Рекомендуется взять сотрудника на контроль."
     elif plan_percent < 90:
-        return f"⚠️ **План не выполнен ({plan_percent:.0f}%).** Необходимо выяснить причины."
+        return f"⚠️ План не выполнен ({plan_percent:.0f}%). Необходимо выяснить причины."
     elif lates > 0:
-        return f"⚠️ **Проблемы с дисциплиной.** План выполнен, но зафиксировано {lates} опоздание(й). Рекомендуется провести беседу."
+        return f"⚠️ Проблемы с дисциплиной. План выполнен, но зафиксировано {lates} опоздание(й). Рекомендуется провести беседу."
     elif has_long_pauses:
-        return f"✅ **Хорошая работа, но есть замечание.** План выполнен, однако были слишком длинные паузы. Стоит обратить внимание на ритмичность."
+        return f"✅ Хорошая работа, но есть замечание. План выполнен, однако были слишком длинные паузы. Стоит обратить внимание на ритмичность."
     else:
-        return "✅ **Отличная работа!** Все показатели в норме. Можно ставить в пример."
+        return "✅ Отличная работа! Все показатели в норме. Можно ставить в пример."
 
 
 # ========================================
@@ -780,7 +789,7 @@ def run_scheduler():
         time.sleep(1)
 
 if __name__ == '__main__':
-    logging.info("🤖 Бот (версия 13.0, Финальная) запущен...")
+    logging.info("🤖 Бот (версия 15.0, Финальная с подсчетом) запущен...")
     if not all([gspread, pd, openai]):
         logging.critical("Ключевые библиотеки (gspread, pandas, openai) не загружены. Функциональность будет ограничена.")
     else:
