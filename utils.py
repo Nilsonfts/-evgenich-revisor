@@ -1,114 +1,152 @@
-"""Comprehensive utils.py with minimal working implementations
-to satisfy imports from handlers and break cyclic dependencies.
-Extend real logic later.
-"""
-
+# utils.py (ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ)
 import json
 import logging
-from typing import Any, Dict
+import os
+import datetime
+import pytz
+from telebot import types
+from functools import wraps
+from collections import Counter
 
-# --------------------------------------------------------
-# Basic helpers & placeholders
-# --------------------------------------------------------
+# Импортируем переменные и данные из других модулей
+from config import BOSS_ID, BREAK_DURATION_MINUTES, EXPECTED_VOICES_PER_SHIFT
+from state import chat_data, user_history
 
-def get_chat_title(chat_id: int) -> str:
-    """Return chat title placeholder."""
-    return str(chat_id)
+def load_json_data(filepath, default_value={}):
+    """Загружает данные из JSON файла."""
+    try:
+        if os.path.exists(filepath):
+            with open(filepath, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception as e:
+        logging.error(f"Ошибка загрузки файла {filepath}: {e}")
+    return default_value
+
+def save_json_data(filepath, data):
+    """Сохраняет данные в JSON файл."""
+    try:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+        return True
+    except Exception as e:
+        logging.error(f"Ошибка сохранения файла {filepath}: {e}")
+        return False
 
 def is_admin(bot, user_id: int, chat_id: int) -> bool:
-    """Simplified admin check: everyone is admin by default."""
-    return True
+    """Проверяет, является ли пользователь админом чата."""
+    if user_id == BOSS_ID:
+        return True
+    if chat_id > 0:
+        return False
+    try:
+        return user_id in [admin.user.id for admin in bot.get_chat_administrators(chat_id)]
+    except Exception as e:
+        logging.warning(f"Не удалось проверить права админа для user {user_id} в чате {chat_id}: {e}")
+        return False
 
-# Decorator factory requiring admin rights
 def admin_required(bot):
+    """Декоратор для проверки прав администратора."""
     def decorator(func):
-        def wrapper(message, *args, **kwargs):
-            if is_admin(bot, message.from_user.id, message.chat.id):
-                return func(message, *args, **kwargs)
-            else:
-                try:
-                    bot.reply_to(message, "⛔️ Доступ только для администраторов.")
-                except Exception:
-                    pass
+        @wraps(func)
+        def wrapper(message):
+            if not is_admin(bot, message.from_user.id, message.chat.id):
+                return bot.reply_to(message, "⛔️ Эта команда доступна только администраторам чата.")
+            return func(message)
         return wrapper
     return decorator
 
-# --------------------------------------------------------
-# JSON persistence helpers
-# --------------------------------------------------------
+def get_username(user: types.User) -> str:
+    """Возвращает форматированное имя пользователя."""
+    return f"@{user.username}" if user.username else user.first_name
 
-def load_json_data(filepath: str, default: Any):
-    """Safe JSON loader. Returns *default* if file missing / invalid."""
+def get_chat_title(bot, chat_id: int) -> str:
+    """Получает название чата по его ID."""
     try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logging.warning("load_json_data: %s", e)
-        return default
+        return bot.get_chat(chat_id).title or str(chat_id)
+    except Exception:
+        return str(chat_id)
 
-def save_json_data(filepath: str, data: Any) -> None:
-    """Write data to JSON file, safe mode."""
-    try:
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logging.error("save_json_data: %s", e)
+def init_user_data(user_id: int, username: str) -> dict:
+    """Создает пустую структуру данных для нового пользователя."""
+    return {
+        'username': username, 'count': 0, 'on_break': False, 'breaks_count': 0,
+        'late_returns': 0, 'last_voice_time': None, 'last_break_time': None,
+        'break_start_time': None, 'voice_timeout_reminder_sent': False,
+        'last_break_reminder_time': None, 'recognized_ads': [],
+        'voice_deltas': [], 'voice_durations': []
+    }
 
-# --------------------------------------------------------
-# Bot‑state helper stubs (expand later)
-# --------------------------------------------------------
+def init_shift_data(chat_id: int):
+    """Создает пустую структуру данных для новой смены в чате."""
+    from state import chat_configs
+    chat_data[chat_id] = {
+        'main_id': None, 'users': {}, 'main_username': 'N/A',
+        'shift_start': datetime.datetime.now(pytz.timezone('Europe/Moscow')),
+        'shift_goal': chat_configs.get(chat_id, {}).get('default_goal', EXPECTED_VOICES_PER_SHIFT)
+    }
 
-_users_state: Dict[int, Dict] = {}
-_shift_state: Dict[int, Dict] = {}
+def handle_user_return(bot, chat_id: int, user_id: int):
+    """Обрабатывает возвращение пользователя с перерыва."""
+    user = chat_data.get(chat_id, {}).get('users', {}).get(user_id)
+    if not user or not user.get('on_break'): return
+    now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+    break_duration_minutes = (now - user['break_start_time']).total_seconds() / 60
+    user['on_break'] = False
+    if break_duration_minutes > BREAK_DURATION_MINUTES:
+        user['late_returns'] += 1
+        bot.send_message(chat_id, f"✅ {user['username']}, с возвращением! Вы опоздали на {int(break_duration_minutes - BREAK_DURATION_MINUTES)} мин.")
+    else:
+        bot.send_message(chat_id, f"👍 {user['username']}, с возвращением! Молодец, что вернулись вовремя.")
+    save_history_event(chat_id, user_id, user['username'], f"Вернулся с перерыва (длительность {break_duration_minutes:.1f} мин)")
 
-def init_user_data(user_id: int) -> Dict:
-    return _users_state.setdefault(user_id, {})
+def save_history_event(chat_id: int, user_id: int, username: str, event_description: str):
+    """Сохраняет событие в лог истории смены."""
+    if chat_id not in user_history:
+        user_history[chat_id] = []
+    now_str = datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
+    user_history[chat_id].append(f"{now_str} | {username} ({user_id}) | {event_description}")
+    logging.info(f"HISTORY [{chat_id}]: {username} - {event_description}")
 
-def init_shift_data(chat_id: int) -> Dict:
-    return _shift_state.setdefault(chat_id, {})
+def generate_detailed_report(chat_id: int, data: dict) -> list:
+    """Собирает текстовый отчет на основе данных о смене."""
+    user_data = data.get('users', {}).get(data.get('main_id'))
+    if not user_data:
+        return ["Ошибка: нет данных о ведущем."]
 
-def handle_user_return(user_id: int, chat_id: int):
-    """Stub to mark user's return from break."""
-    _users_state.setdefault(user_id, {}).update({"status": "present"})
+    shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT)
+    plan_percent = (user_data['count'] / shift_goal * 100) if shift_goal > 0 else 0
+    avg_delta = sum(user_data.get('voice_deltas', [])) / len(user_data['voice_deltas']) if user_data.get('voice_deltas') else 0
+    max_pause = max(user_data.get('voice_deltas', [0]))
+    avg_duration = sum(user_data.get('voice_durations', [])) / len(user_data['voice_durations']) if user_data.get('voice_durations') else 0
 
-def save_history_event(chat_id: int, text: str):
-    """Log history event placeholder (prints to console)."""
-    logging.info("HISTORY [%s]: %s", chat_id, text)
+    report_lines = [
+        f"📋 **#ОТЧЕТ_ТЕКСТ_ВЕДУЩЕГО** ({data.get('shift_start', datetime.datetime.now()).strftime('%d.%m.%Y')})",
+        f"🎤 **Ведущий:** {user_data.get('username', 'N/A')}",
+        "\n---",
+        "**📊 Основная Статистика**",
+        f"**Голосовых:** {user_data.get('count', 0)} из {shift_goal} ({plan_percent:.0f}%)",
+        f"**Перерывов:** {user_data.get('breaks_count', 0)}",
+        f"**Опозданий:** {user_data.get('late_returns', 0)}",
+        "\n---",
+        "**📈 Аналитика Активности**",
+        f"**Средний ритм:** {avg_delta:.1f} мин/ГС" if avg_delta else "**Средний ритм:** Н/Д",
+        f"**Макс. пауза:** {max_pause:.1f} мин." if max_pause else "**Макс. пауза:** Н/Д",
+        f"**Ср. длина ГС:** {avg_duration:.1f} сек." if avg_duration else "**Ср. длина ГС:** Н/Д"
+    ]
+    
+    ad_counts = Counter(user_data.get('recognized_ads', []))
+    if ad_counts:
+        report_lines.append("\n---\n**📝 Анализ Контента**")
+        for ad, count in ad_counts.items():
+            report_lines.append(f"✔️ {ad} (x{count})")
+            
+    return report_lines
 
-# --------------------------------------------------------
-# Report helper
-# --------------------------------------------------------
-
-def get_full_report_text(report_data: Dict[str, Any]) -> str:
+def get_full_report_text(report_data: dict) -> str:
+    """Формирует красивый текстовый отчет из словаря данных."""
     lines = ["📋 Итоговый отчёт:\n"]
-    for k, v in report_data.items():
-        lines.append(f"• {k}: {v}")
+    for key, value in report_data.items():
+        if isinstance(value, float):
+            value = f"{value:.2f}"
+        lines.append(f"• {key}: {value}")
     return "\n".join(lines)
-
-# utils.py  – добавьте в любом месте (например, рядом с get_full_report_text)
-
-def generate_detailed_report(chat_id: int) -> str:
-    """
-    Возвращает подробный отчёт по смене.
-    Сейчас – заглушка, чтобы satisfy импорты;
-    позже можно сформировать текст из stored state / Google Sheets.
-    """
-    # Пример простого текста:
-    return (
-        f"📑 Подробный отчёт для чата {chat_id}\n"
-        "— Голосовых:   0\n"
-        "— Ошибок:      0\n"
-        "— Продаж:      0\n"
-    )
-
-# --------------------------------------------------------
-# Lazy proxy to g_sheets to avoid cyclic import
-# --------------------------------------------------------
-
-def get_sheet(*args, **kwargs):
-    from g_sheets import get_sheet as _get_sheet
-    return _get_sheet(*args, **kwargs)
-
-def get_username(user) -> str:
-    """Возвращает username или fallback-строку."""
-    return f"@{user.username}" if getattr(user, "username", None) else f"{user.first_name}"
