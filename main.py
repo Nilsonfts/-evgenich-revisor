@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Финальная версия бота v4.1:
-- Указано точное имя Google Таблицы для выгрузки.
+Финальная версия бота v4.2:
+- Подключение к Google Sheets по ID (ключу) для максимальной надежности.
 - Все предыдущие функции сохранены.
 """
 
@@ -50,10 +50,7 @@ if not BOT_TOKEN:
 
 BOSS_ID = 196614680
 ADMIN_REPORT_CHAT_ID = -1002645821302 
-STATS_FILE = 'user_stats.csv'
 LAST_REPORT_FILE = 'last_shift_report.txt'
-# <<< ИЗМЕНЕНИЕ: Указано точное имя вашей таблицы >>>
-GOOGLE_SHEET_NAME = "Текст Ведущего: Аналитика" 
 
 # Параметры смены
 VOICE_TIMEOUT_MINUTES = 40
@@ -72,21 +69,29 @@ user_history: Dict[int, List[str]] = {}
 #      РАБОТА С GOOGLE ТАБЛИЦАМИ
 # ========================================
 def get_sheet():
-    """Авторизуется и возвращает рабочий лист Google Таблицы."""
+    """Авторизуется и возвращает рабочий лист Google Таблицы по ключу."""
     if not gspread: return None
     try:
+        # Авторизация через переменную окружения
         creds_json_str = os.getenv("GOOGLE_CREDENTIALS_JSON")
         if not creds_json_str:
             logging.error("Переменная окружения GOOGLE_CREDENTIALS_JSON не найдена!")
             return None
-        
         creds_dict = json.loads(creds_json_str)
         gc = gspread.service_account_from_dict(creds_dict)
-        spreadsheet = gc.open(GOOGLE_SHEET_NAME)
+        
+        # <<< ИЗМЕНЕНИЕ: Открываем таблицу по ключу, а не по имени >>>
+        sheet_key = os.getenv("GOOGLE_SHEET_KEY")
+        if not sheet_key:
+            logging.error("Переменная окружения GOOGLE_SHEET_KEY с ID таблицы не найдена!")
+            return None
+
+        spreadsheet = gc.open_by_key(sheet_key)
         worksheet = spreadsheet.sheet1
         return worksheet
+        
     except gspread.exceptions.SpreadsheetNotFound:
-        logging.error(f"Таблица с именем '{GOOGLE_SHEET_NAME}' не найдена. Проверьте название и права доступа для сервисного аккаунта.")
+        logging.error(f"Таблица с ключом не найдена. Проверьте ID таблицы и права доступа для сервисного аккаунта.")
         return None
     except Exception as e:
         logging.error(f"Ошибка подключения к Google Sheets: {e}")
@@ -103,13 +108,12 @@ def load_user_stats() -> Dict[int, Dict]:
         records = worksheet.get_all_records()
         for record in records:
             if record.get('user_id'):
-                user_id = int(record['user_id'])
-                stats[user_id] = {
-                    'username': record['username'],
-                    'total_shifts': int(record['total_shifts']),
-                    'total_voices': int(record['total_voices']),
-                    'total_breaks': int(record['total_breaks']),
-                    'total_lates': int(record['total_lates'])
+                stats[int(record['user_id'])] = {
+                    'username': record.get('username'),
+                    'total_shifts': int(record.get('total_shifts', 0)),
+                    'total_voices': int(record.get('total_voices', 0)),
+                    'total_breaks': int(record.get('total_breaks', 0)),
+                    'total_lates': int(record.get('total_lates', 0))
                 }
     except Exception as e:
         logging.error(f"Ошибка при чтении данных из Google Таблицы: {e}")
@@ -149,6 +153,8 @@ def update_historical_stats(user_id: int, username: str, shift_data: dict):
     all_stats[user_id]['total_lates'] += shift_data.get('late_returns', 0)
     
     save_user_stats(all_stats)
+
+# ... (остальной код остается без изменений, я привожу его полностью для вашего удобства)
 
 # ========================================
 #           ДЕКОРАТОРЫ И ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
@@ -588,9 +594,10 @@ def generate_analytical_summary(user_data: dict) -> str:
 
 def send_end_of_shift_reports():
     logging.info("Начало отправки итоговых отчетов по сменам в 04:01...")
-    active_chats = list(chat_data.keys())
     report_sent = False
-    for chat_id in active_chats:
+    active_chats_copy = list(chat_data.keys())
+
+    for chat_id in active_chats_copy:
         data = chat_data.get(chat_id)
         if not data or not data.get('main_id') or data['main_id'] not in data.get('users', {}):
             continue
@@ -632,7 +639,7 @@ def run_scheduler():
 #           ЗАПУСК БОТА
 # ========================================
 if __name__ == '__main__':
-    logging.info("🤖 Бот (версия 4.1, командный интерфейс) запущен...")
+    logging.info("🤖 Бот (версия 4.2, Google Sheets) запущен...")
     threading.Thread(target=run_scheduler, daemon=True).start()
     while True:
         try:
