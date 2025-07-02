@@ -44,6 +44,16 @@ def register_handlers(bot):
     
         if not is_admin(bot, user_id, chat_id):
             return bot.answer_callback_query(call.id, "⛔️ Доступ запрещён!", show_alert=True)
+
+    # ====== DEBUG: ловим ВСЕ callback_query, чтобы понять, что приходит ======
+    @bot.callback_query_handler(func=lambda call: True)
+    def _debug_all_callbacks(call):
+        try:
+            bot.answer_callback_query(call.id, f"DBG: {call.data}", show_alert=True)
+        except Exception:
+            pass  # на всякий случай, чтобы не падало из‑за блокировки всплывашек
+        bot.send_message(call.message.chat.id, f"🧪 DEBUG: получено callback_data → {call.data}")
+
     
         bot.answer_callback_query(call.id)
         action = call.data.split('_', 1)[1]
