@@ -280,9 +280,16 @@ def save_history_event(chat_id, user_id, username, event_description):
 #   АНАЛИЗ РЕЧИ ЧЕРЕЗ OPENAI
 # ========================================
 def analyze_voice_content(audio_path: str) -> str:
+    """
+    Анализирует аудиофайл и в случае ошибки отправляет уведомление лично BOSS_ID.
+    """
+    logging.info("Попытка анализа голосового контента...")
+    
     if not client or not AD_TEMPLATES:
+        logging.warning("Клиент OpenAI или шаблоны AD_TEMPLATES недоступны. Пропуск анализа.")
         return None
     try:
+        # Шаг 1: Транскрипция аудио в текст
         with open(audio_path, "rb") as audio_file:
             transcript = client.audio.transcriptions.create(
               model="whisper-1", 
@@ -294,6 +301,7 @@ def analyze_voice_content(audio_path: str) -> str:
         if not recognized_text.strip():
             return None
 
+        # Шаг 2: Анализ текста с помощью GPT
         system_prompt = "Ты — ассистент, который определяет, какой из рекламных текстов произнес диктор. В ответ дай только название рекламы из списка или слово 'None', если совпадений нет."
         ad_list_for_prompt = "\n".join([f"- {name}: '{text}'" for name, text in AD_TEMPLATES.items()])
         user_prompt = f"Вот текст от диктора: '{recognized_text}'.\n\nВот список рекламных шаблонов:\n{ad_list_for_prompt}\n\nКакая реклама была произнесена? Ответь только названием или 'None'."
@@ -314,8 +322,23 @@ def analyze_voice_content(audio_path: str) -> str:
         else:
             logging.info("GPT не нашел точного совпадения с шаблонами.")
             return None
+            
     except Exception as e:
+        # ИЗМЕНЕНИЕ: Отправляем ошибку в личные сообщения BOSS_ID
+        error_message = (
+            f"❗️ **Ошибка анализа речи OpenAI** ❗️\n\n"
+            f"Произошла ошибка при обработке аудиофайла:\n`{e}`\n\n"
+            f"*Возможные причины:*\n"
+            f"- Неверный или неактивный `OPENAI_API_KEY`.\n"
+            f"- Закончились средства на балансе OpenAI.\n"
+            f"- Проблемы с доступом к API OpenAI."
+        )
         logging.error(f"Ошибка при обработке аудио через OpenAI: {e}")
+        try:
+            if BOSS_ID:
+                bot.send_message(BOSS_ID, error_message, parse_mode="Markdown")
+        except Exception as send_e:
+            logging.error(f"Не удалось отправить личное сообщение об ошибке анализа речи: {send_e}")
         return None
 
 def process_audio_and_save_result(file_path, user_data):
