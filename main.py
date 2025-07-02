@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Финальная версия v12.0 (Полная):
-- Шаблоны для анализа контента вынесены в отдельный файл ad_templates.json.
-- Добавлен анализ содержания голосовых сообщений через OpenAI (Whisper + GPT).
-- Результаты анализа добавляются в итоговый отчет и Google Таблицу.
-- Вся предыдущая функциональность сохранена и финализирована.
+Финальная версия v13.0 (Полная):
+- Команда /check разделена на пользовательскую (/check) и административную (/checkadmin).
+- /checkadmin дополнительно выводит анализ контента.
+- Обновлен текст команды /help.
+- Все предыдущие функции, включая анализ речи, сохранены.
 """
 
 import logging
@@ -55,6 +55,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GOOGLE_SHEET_KEY = os.getenv("GOOGLE_SHEET_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
+
 
 # --- ID и конфиги ---
 BOSS_ID = 196614680
@@ -138,7 +140,7 @@ def get_sheet():
         logging.error("gspread не импортирован или GOOGLE_SHEET_KEY не задан.")
         return None
     try:
-        creds_json_str = os.getenv("GOOGLE_CREDENTIALS_JSON")
+        creds_json_str = GOOGLE_CREDENTIALS_JSON
         if not creds_json_str:
             logging.error("Переменная окружения GOOGLE_CREDENTIALS_JSON не найдена!")
             return None
@@ -345,24 +347,75 @@ def handle_restart(message):
     else:
         bot.reply_to(message, "Активной смены в этом чате и так не было.")
 
+# НОВАЯ ВЕРСИЯ /check
 @bot.message_handler(commands=['check', 'промежуточный'])
-def check_shift(message):
+def handle_check(message):
+    """Показывает личный промежуточный отчет для текущего ведущего."""
     chat_id = message.chat.id
+    user_id = message.from_user.id
     data = chat_data.get(chat_id)
+
     if not data or not data.get('main_id'):
-        return bot.reply_to(message, "Смена еще не началась.")
-    user = data.get('users', {}).get(data['main_id'])
-    if not user:
-        return bot.reply_to(message, "Не найдены данные по текущему ведущему.")
-    plan_percent = (user['count'] / EXPECTED_VOICES_PER_SHIFT * 100) if EXPECTED_VOICES_PER_SHIFT > 0 else 0
+        return bot.reply_to(message, "Смена в этом чате еще не началась.")
+
+    main_user_id = data['main_id']
+    main_user_data = data.get('users', {}).get(main_user_id)
+
+    if user_id != main_user_id:
+        return bot.reply_to(message, f"Эту команду может использовать только текущий главный на смене: {main_user_data.get('username', 'Неизвестно')}.")
+
+    plan_percent = (main_user_data['count'] / EXPECTED_VOICES_PER_SHIFT * 100) if EXPECTED_VOICES_PER_SHIFT > 0 else 0
+    
     report_text = (
-        f"📋 #Промежуточный_отчет ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})\n"
-        f"🎤 Ведущий: {user['username']}\n"
-        f"🗣️ Голосовых: {user['count']} из {EXPECTED_VOICES_PER_SHIFT} ({plan_percent:.0f}%)\n"
-        f"☕ Перерывов: {user['breaks_count']}\n"
-        f"⏳ Задержек после перерыва: {user['late_returns']}"
+        f"📋 #Промежуточный_отчет для вас ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})\n\n"
+        f"🗣️ Голосовых: {main_user_data['count']} из {EXPECTED_VOICES_PER_SHIFT} ({plan_percent:.0f}%)\n"
+        f"☕ Перерывов: {main_user_data['breaks_count']}\n"
+        f"⏳ Опозданий с перерыва: {main_user_data['late_returns']}"
     )
     bot.reply_to(message, report_text)
+
+# НОВАЯ КОМАНДА /checkadmin
+@bot.message_handler(commands=['checkadmin'])
+@admin_required
+def handle_checkadmin(message):
+    """(Только для админов) Показывает отчет по ведущему с анализом тем."""
+    chat_id = message.chat.id
+    
+    try:
+        target_username = message.text.split()[1]
+        if not target_username.startswith('@'):
+            target_username = '@' + target_username
+    except IndexError:
+        return bot.reply_to(message, "Неверный формат. Используйте: `/checkadmin @username`")
+
+    data = chat_data.get(chat_id)
+    if not data or not data.get('main_id'):
+        return bot.reply_to(message, "Смена в этом чате еще не началась.")
+
+    main_user_data = data.get('users', {}).get(data['main_id'])
+    
+    # Сравниваем без учета регистра
+    if main_user_data['username'].lower() != target_username.lower():
+        return bot.reply_to(message, f"Указанный пользователь {target_username} не является главным на текущей смене. Сейчас на смене: {main_user_data['username']}")
+
+    # --- Генерация отчета ---
+    plan_percent = (main_user_data['count'] / EXPECTED_VOICES_PER_SHIFT * 100) if EXPECTED_VOICES_PER_SHIFT > 0 else 0
+    report_lines = [
+        f"📋 #Промежуточный_отчет ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})",
+        f"🏢 Чат: {get_chat_title(chat_id)}",
+        f"🎤 Ведущий: {main_user_data['username']}", "---",
+        f"🗣️ **Голосовых:** {main_user_data['count']} из {EXPECTED_VOICES_PER_SHIFT} ({plan_percent:.0f}%)",
+        f"☕ **Перерывов:** {main_user_data['breaks_count']}",
+        f"⏳ **Опозданий с перерыва:** {main_user_data['late_returns']}"
+    ]
+
+    if main_user_data.get('recognized_ads'):
+        report_lines.append("\n**Анализ контента:**")
+        for ad in main_user_data['recognized_ads']:
+            report_lines.append(f"✔️ {ad}")
+
+    final_report = "\n".join(report_lines)
+    bot.reply_to(message, final_report)
     
 @bot.message_handler(commands=['отчет'])
 @admin_required
@@ -521,26 +574,27 @@ def test_google_sheet(message):
             f"Не удалось подключиться к Google Sheets. Проверьте лог."
         )
 
+# НОВАЯ ВЕРСИЯ /help
 @bot.message_handler(commands=['help'])
 def handle_help(message):
     help_text = """
-*Справка по командам бота:*
+*Справка по командам бота*
 
+*Общие Команды*
 `/start` — Назначить себя главным на смене.
-`/restart` — Перезапустить смену, сбросив главного.
-`/check` — Показать промежуточный отчет.
-`/отчет` — (Админ) Сформировать финальный отчет досрочно.
-`/выгрузка` — (Админ) Выгрузить историю событий смены.
-
+`/check` — Показать свой промежуточный отчет (только для ведущего).
 `/сводка` — Посмотреть свою личную статистику за все время.
-`/analyze` — (Админ) Показать рейтинг всех сотрудников.
-
 `/перерыв` или `/обед` — Уйти на перерыв.
 
-*Команды администратора чата:*
-`/set_timezone +N` — Установить часовой пояс (например, `+3`).
+*Административные Команды*
+`/checkadmin @username` — Показать отчет по текущему ведущему.
+`/restart` — Перезапустить смену, сбросив главного.
+`/отчет` — Сформировать и отправить финальный отчет по смене.
+`/analyze` — Показать рейтинг всех сотрудников из Google Таблиц.
+`/выгрузка` — Выгрузить историю событий текущей смены.
+`/set_timezone +N` — Установить часовой пояс для чата.
 `/тайминг 19:00 04:00` — Установить время начала и окончания смены.
-`/testsheet` - Проверить соединение с Google Sheets.
+`/testsheet` — Проверить соединение с Google Sheets.
 """
     bot.reply_to(message, help_text)
 
@@ -726,7 +780,7 @@ def run_scheduler():
         time.sleep(1)
 
 if __name__ == '__main__':
-    logging.info("🤖 Бот (версия 12.0, Финальная) запущен...")
+    logging.info("🤖 Бот (версия 13.0, Финальная) запущен...")
     if not all([gspread, pd, openai]):
         logging.critical("Ключевые библиотеки (gspread, pandas, openai) не загружены. Функциональность будет ограничена.")
     else:
