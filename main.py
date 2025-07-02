@@ -528,6 +528,31 @@ def my_total_stats(message: types.Message):
     except Exception as e:
         logging.error(f"Ошибка анализа Google Sheets для /сводка: {e}")
         bot.send_message(message.chat.id, "Произошла ошибка при анализе данных из таблицы.")
+
+@bot.message_handler(commands=['help', 'справка'])
+def handle_help(message: types.Message):
+    is_user_admin = is_admin(message.from_user.id, message.chat.id)
+    
+    help_text_lines = [
+        "📖 *Справка по командам бота*",
+        "\n---",
+        "**👤 Основные команды для ведущего:**",
+        "`/start` или `/старт` — Занять смену, если она свободна.",
+        "`/промежуточный` или `/check` — Показать свой личный отчет по текущей смене.",
+        "`/сводка` — Посмотреть свою общую статистику за все время.",
+        "Для перерыва просто напишите в чат `перерыв`, `обед` или `отдых`.",
+        "Для возвращения — `вернулся`, `на месте`.",
+    ]
+    
+    if is_user_admin:
+        help_text_lines.extend([
+            "\n---",
+            "**🛠️ Команды для администраторов:**",
+            "`/admin` — Открыть интерактивное меню для управления ботом.",
+            "Все основные действия (проверка статуса, настройка, отчеты, рассылка и т.д.) выполняются через кнопки в этом меню."
+        ])
+
+    bot.reply_to(message, "\n".join(help_text_lines))
         
 # ========================================
 #   НОВЫЕ АДМИНИСТРАТИВНЫЕ ИНСТРУМЕНТЫ (МЕНЮ /admin)
@@ -1070,7 +1095,10 @@ def send_end_of_shift_report_for_chat(chat_id: int):
     data = chat_data.get(chat_id)
     if not data or not data.get('main_id'):
         logging.warning(f"Попытка закрыть смену в чате {chat_id}, но активной смены нет.")
-        bot.send_message(chat_id, "Не удалось сформировать отчет: смена не была активна.")
+        try:
+            bot.send_message(chat_id, "Не удалось сформировать отчет: смена не была активна.")
+        except Exception as e:
+            logging.error(f"Не удалось отправить уведомление о неактивной смене в чат {chat_id}: {e}")
         return
     
     main_user_data = data.get('users', {}).get(data.get('main_id'))
@@ -1100,7 +1128,6 @@ def send_end_of_shift_report_for_chat(chat_id: int):
         except Exception as e:
             logging.error(f"Не удалось отправить отчет в чат руководства: {e}")
     
-    # Очистка данных после отправки отчета
     if chat_id in user_history: del user_history[chat_id]
     if chat_id in chat_data: del chat_data[chat_id]
     logging.info(f"Данные смены для чата {chat_id} очищены.")
@@ -1109,12 +1136,10 @@ def check_user_activity():
     now_moscow = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
     for chat_id, data in list(chat_data.items()):
         if not data.get('main_id'): continue
-        
         main_id = data['main_id']
         user_data = data.get('users', {}).get(main_id)
         if not user_data: continue
 
-        # Напоминание о затянувшемся перерыве
         if user_data.get('on_break'):
             break_start_time = user_data.get('break_start_time')
             if break_start_time and (now_moscow - break_start_time).total_seconds() / 60 > BREAK_DURATION_MINUTES:
@@ -1127,7 +1152,6 @@ def check_user_activity():
                         logging.error(f"Не удалось отправить напоминание о перерыве в чат {chat_id}: {e}")
             continue
 
-        # Напоминание о долгом отсутствии ГС
         last_voice_time = user_data.get('last_voice_time')
         if last_voice_time:
             inactive_minutes = (now_moscow - last_voice_time).total_seconds() / 60
@@ -1148,54 +1172,47 @@ def check_for_shift_end():
             local_tz = pytz.timezone(tz_name)
             now_local = datetime.datetime.now(local_tz)
             end_time_obj = datetime.datetime.strptime(end_time_str, '%H:%M').time()
-            
-            # Срабатываем через минуту после конца смены, чтобы точно захватить все события
             report_time_obj = (datetime.datetime.combine(now_local.date(), end_time_obj) + datetime.timedelta(minutes=1)).time()
             
-            # Проверяем, что в этом чате есть активная смена
             if chat_data.get(chat_id, {}).get('main_id'):
-                # Проверяем, что время совпадает и отчет за сегодня еще не отправлялся
                 if now_local.time().strftime('%H:%M') == report_time_obj.strftime('%H:%M'):
                     if chat_data[chat_id].get('last_report_date') != now_local.date():
                         logging.info(f"Наступило время ({report_time_obj.strftime('%H:%M')}) для отчета в чате {chat_id} (ТЗ: {tz_name}).")
                         send_end_of_shift_report_for_chat(chat_id)
-                        # Помечаем, что отчет за сегодня отправлен
                         if chat_id in chat_data:
                             chat_data[chat_id]['last_report_date'] = now_local.date()
         except Exception as e:
             logging.error(f"Ошибка в check_for_shift_end для чата {chat_id}: {e}")
 
 def run_scheduler():
+    """Эта функция содержит все фоновые задачи, которые должны выполняться регулярно."""
     schedule.every(1).minutes.do(check_for_shift_end)
     schedule.every(1).minutes.do(check_user_activity)
     while True:
         try:
             schedule.run_pending()
         except Exception as e:
-            logging.error(f"Ошибка в цикле планировщика: {e}")
+            logging.error(f"Критическая ошибка в цикле планировщика: {e}")
         time.sleep(1)
 
 # ========================================
 #   ЗАПУСК БОТА
 # ========================================
 if __name__ == '__main__':
-    logging.info("🤖 Бот (версия 24.0, Integrated) запускается...")
+    logging.info("🤖 Бот (версия 24.1, Production Ready) запускается...")
+    
+    # Проверка наличия ключевых библиотек
     if not all([gspread, pd, openai]):
         logging.critical("Ключевые библиотеки (gspread, pandas, openai) не загружены. Функциональность будет ограничена.")
     
+    # Загружаем все конфигурации при старте
     load_all_data()
     
-    # Запускаем планировщик в отдельном потоке
+    # Запускаем планировщик фоновых задач в отдельном потоке
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
     logging.info("Планировщик фоновых задач запущен.")
     
-    # Основной цикл для получения сообщений
-    while True:
-        try:
-            logging.info("Бот запущен и готов к работе.")
-            bot.polling(none_stop=True, interval=0)
-        except Exception as e:
-            logging.error(f"Критическая ошибка polling: {e}")
-            bot.stop_polling()
-            time.sleep(15) # Пауза перед перезапуском
+    # Запускаем бота в режиме бесконечного опроса с автоматическим перезапуском
+    logging.info("Бот запущен и готов к работе.")
+    bot.infinity_polling(timeout=60, long_polling_timeout=30)
