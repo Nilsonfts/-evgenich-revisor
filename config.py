@@ -32,3 +32,12 @@ TIMEZONE_MAP = {
     "+5": "Asia/Irkutsk", "+6": "Asia/Yakutsk", "+7": "Asia/Vladivostok",
     "+8": "Asia/Magadan", "+9": "Asia/Kamchatka"
 }
+
+# --- Ключевые слова из phrases.py (для удобства импорта в одном месте) ---
+try:
+    from phrases import BREAK_KEYWORDS, RETURN_CONFIRM_WORDS, soviet_phrases, ACHIEVEMENTS
+except ImportError:
+    BREAK_KEYWORDS = ["перерыв", "отдых", "обед", "покурить", "отойду"]
+    RETURN_CONFIRM_WORDS = ["вернулся", "на месте", "пришел", "тут"]
+    soviet_phrases = { "accept": ["Принято."], "too_short": ["Коротко."] }
+    ACHIEVEMENTS = {}
