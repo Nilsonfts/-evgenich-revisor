@@ -1,3 +1,8 @@
+# -- lazy helper to avoid circular import --
+def __get_chat_title(chat_id: int):
+    from utils import get_chat_title
+    return _get_chat_title(chat_id)
+
 # g_sheets.py
 import json
 import logging
@@ -15,8 +20,6 @@ except ImportError:
 # Импортируем переменные и функции из наших модулей
 from config import GOOGLE_SHEET_KEY, GOOGLE_CREDENTIALS_JSON, EXPECTED_VOICES_PER_SHIFT
 from state import chat_configs
-from utils import get_chat_title
-
 def get_sheet() -> Optional[gspread.Worksheet]:
     """Подключается к Google Sheets и возвращает рабочий лист."""
     if not all([gspread, GOOGLE_SHEET_KEY, GOOGLE_CREDENTIALS_JSON]):
@@ -82,7 +85,7 @@ def append_shift_to_google_sheet(bot, chat_id: int, data: dict, analytical_concl
     row_data = [
         data.get('shift_start', now_moscow).strftime('%d.%m.%Y'),
         chat_id,
-        get_chat_title(bot, chat_id),  # Передаем bot в get_chat_title
+        _get_chat_title(bot, chat_id),  # Передаем bot в get_chat_title
         brand,
         city,
         main_id,
