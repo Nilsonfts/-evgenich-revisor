@@ -557,9 +557,11 @@ def handle_help(message: types.Message):
 # ========================================
 #   НОВЫЕ АДМИНИСТРАТИВНЫЕ ИНСТРУМЕНТЫ (МЕНЮ /admin)
 # ========================================
+
 @bot.message_handler(commands=['admin'])
 @admin_required
 def handle_admin_menu(message: types.Message):
+    """Создает и отправляет главное меню администратора."""
     markup = types.InlineKeyboardMarkup(row_width=2)
     is_boss = message.from_user.id == BOSS_ID
     
@@ -579,9 +581,12 @@ def handle_admin_menu(message: types.Message):
         
     bot.send_message(message.chat.id, "Добро пожаловать в панель администратора!", reply_markup=markup)
 
-# Обработчик всех нажатий на кнопки в админ-меню
 @bot.callback_query_handler(func=lambda call: call.data.startswith('admin_'))
 def handle_admin_callbacks(call: types.CallbackQuery):
+    """
+    Обрабатывает ВСЕ нажатия на кнопки в главном админ-меню.
+    Это ключевая функция, которой, вероятно, не хватало.
+    """
     chat_id = call.message.chat.id
     user_id = call.from_user.id
     message_id = call.message.message_id
@@ -592,35 +597,40 @@ def handle_admin_callbacks(call: types.CallbackQuery):
     
     action = call.data.split('_', 1)[1]
     
+    # Убираем часики ожидания на кнопке
+    bot.answer_callback_query(call.id)
+    
     if action == 'shift_status':
-        show_shift_status(call)
+        show_shift_status(chat_id)
     elif action == 'analyze_all':
-        show_overall_rating(call)
+        show_overall_rating(chat_id)
     elif action == 'manage_ads':
+        # Переходим в меню управления рекламой
         show_ad_brands_menu(call.message, is_main_menu=True)
     elif action == 'find_problems':
-        find_problem_zones(call)
+        find_problem_zones(chat_id)
     elif action == 'chat_setup':
-        show_setup_menu(call)
+        show_setup_menu(chat_id)
     elif action == 'restart_shift':
-        restart_shift(call)
+        restart_shift(chat_id, user_id)
     elif action == 'force_report':
-        force_report(call)
+        force_report(chat_id)
     elif action == 'export_history':
-        export_history(call)
+        export_history(chat_id)
     elif action == 'broadcast':
         if user_id != BOSS_ID: # Двойная проверка
             return bot.answer_callback_query(call.id, "⛔️ Только для BOSS!", show_alert=True)
-        request_broadcast_text(call.message)
+        request_broadcast_text(chat_id)
     elif action == 'main_menu':
-         bot.edit_message_text("Добро пожаловать в панель администратора!", chat_id, message_id, reply_markup=call.message.reply_markup)
-    
-    bot.answer_callback_query(call.id) # Подтверждаем получение callback
+        # Возврат в главное меню (редактируем сообщение)
+        try:
+            bot.edit_message_text("Добро пожаловать в панель администратора!", chat_id, message_id, reply_markup=call.message.reply_markup)
+        except telebot.apihelper.ApiTelegramException:
+            pass # Игнорируем ошибку, если сообщение не изменилось
 
-# --- Реализация функций админ-меню ---
+# --- Функции, которые вызываются кнопками ---
 
-def show_shift_status(call: types.CallbackQuery):
-    chat_id = call.message.chat.id
+def show_shift_status(chat_id: int):
     data = chat_data.get(chat_id)
     if not data or not data.get('main_id'):
         return bot.send_message(chat_id, "Смена в этом чате еще не началась.")
@@ -632,47 +642,17 @@ def show_shift_status(call: types.CallbackQuery):
     report_text = get_full_report_text(chat_id, user_data, data)
     bot.send_message(chat_id, report_text)
     
-def get_full_report_text(chat_id: int, user_data: dict, data: dict) -> str:
-    shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT)
-    plan_percent = (user_data['count'] / shift_goal * 100) if shift_goal > 0 else 0
-    avg_delta = sum(user_data['voice_deltas']) / len(user_data['voice_deltas']) if user_data['voice_deltas'] else 0
-    max_pause = max(user_data['voice_deltas']) if user_data['voice_deltas'] else 0
-    avg_duration = sum(user_data['voice_durations']) / len(user_data['voice_durations']) if user_data['voice_durations'] else 0
-    
-    report_lines = [
-        f"📋 **Промежуточный отчет по смене** ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})",
-        f"🎤 **Ведущий:** {user_data['username']}",
-        "\n---",
-        "**📊 Основная Статистика**",
-        f"**Голосовых:** {user_data['count']} из {shift_goal} ({plan_percent:.0f}%)",
-        f"**Перерывов:** {user_data['breaks_count']}",
-        f"**Опозданий:** {user_data['late_returns']}",
-        "\n---",
-        "**📈 Аналитика Активности**",
-        f"**Средний ритм:** {avg_delta:.1f} мин/ГС" if avg_delta else "**Средний ритм:** Н/Д",
-        f"**Макс. пауза:** {max_pause:.1f} мин." if max_pause else "**Макс. пауза:** Н/Д",
-        f"**Ср. длина ГС:** {avg_duration:.1f} сек." if avg_duration else "**Ср. длина ГС:** Н/Д"
-    ]
-    
-    ad_counts = Counter(user_data.get('recognized_ads', []))
-    if ad_counts:
-        report_lines.append("\n---\n**📝 Анализ Контента**")
-        for ad, count in ad_counts.items():
-            report_lines.append(f"✔️ {ad} (x{count})")
-            
-    return "\n".join(report_lines)
-
-def show_overall_rating(call: types.CallbackQuery):
-    if not pd: return bot.send_message(call.message.chat.id, "Модуль для анализа данных (pandas) не загружен.")
-    bot.send_message(call.message.chat.id, "📊 Анализирую общую статистику из Google Таблицы. Это может занять время...")
+def show_overall_rating(chat_id: int):
+    if not pd: return bot.send_message(chat_id, "Модуль для анализа данных (pandas) не загружен.")
+    bot.send_message(chat_id, "📊 Анализирую общую статистику из Google Таблицы...")
     
     worksheet = get_sheet()
-    if not worksheet: return bot.send_message(call.message.chat.id, "Не удалось подключиться к Google Таблице.")
+    if not worksheet: return bot.send_message(chat_id, "Не удалось подключиться к Google Таблице.")
         
     try:
         df = pd.DataFrame(worksheet.get_all_records())
         if df.empty or 'Тег Ведущего' not in df.columns:
-            return bot.send_message(call.message.chat.id, "В таблице пока нет данных для анализа.")
+            return bot.send_message(chat_id, "В таблице пока нет данных для анализа.")
         
         numeric_cols = ['Голосовых (шт)', 'Опозданий (шт)']
         for col in numeric_cols:
@@ -689,38 +669,35 @@ def show_overall_rating(call: types.CallbackQuery):
         summary['lateness_percent'] = (summary['total_lates'] / summary['total_shifts']) * 100
         summary = summary.sort_values(by='avg_voices', ascending=False).reset_index(drop=True)
         
-        report_lines = ["📊 **Общая сводка по всем сотрудникам**", "_(На основе данных из Google Sheets)_\n"]
+        report_lines = ["📊 **Общая сводка по всем сотрудникам**\n_(На основе данных из Google Sheets)_\n"]
         medals = {0: "🥇", 1: "🥈", 2: "🥉"}
         for i, row in summary.iterrows():
             rank_icon = medals.get(i, f" {i+1}.")
             report_lines.append(
                 f"*{rank_icon}* {row['Тег Ведущего']} — *Ср. ГС:* `{row['avg_voices']:.1f}` | *Опоздания:* `{row['lateness_percent']:.0f}%` | *Смен:* `{row['total_shifts']}`"
             )
-        bot.send_message(call.message.chat.id, "\n".join(report_lines))
+        bot.send_message(chat_id, "\n".join(report_lines))
     except Exception as e:
         logging.error(f"Ошибка анализа Google Sheets для /analyze: {e}")
-        bot.send_message(call.message.chat.id, "Произошла ошибка при анализе данных из таблицы.")
+        bot.send_message(chat_id, "Произошла ошибка при анализе данных из таблицы.")
 
-def find_problem_zones(call: types.CallbackQuery):
-    if not pd: return bot.send_message(call.message.chat.id, "Модуль для анализа данных (pandas) не загружен.")
-    bot.send_message(call.message.chat.id, "🚨 Ищу проблемные зоны в Google Таблице...")
+def find_problem_zones(chat_id: int):
+    if not pd: return bot.send_message(chat_id, "Модуль для анализа данных (pandas) не загружен.")
+    bot.send_message(chat_id, "🚨 Ищу проблемные зоны в Google Таблице...")
     
     worksheet = get_sheet()
-    if not worksheet: return bot.send_message(call.message.chat.id, "Не удалось подключиться к Google Таблице.")
+    if not worksheet: return bot.send_message(chat_id, "Не удалось подключиться к Google Таблице.")
         
     try:
         df = pd.DataFrame(worksheet.get_all_records())
-        if df.empty: return bot.send_message(call.message.chat.id, "В таблице нет данных.")
+        if df.empty: return bot.send_message(chat_id, "В таблице нет данных.")
         
-        # Преобразование в числовой формат
         numeric_cols = ['Выполнение (%)', 'Опозданий (шт)', 'Макс. пауза (мин)']
         for col in numeric_cols:
-            # Убираем '%' и преобразуем
             df[col] = df[col].astype(str).str.replace('%', '', regex=False)
             df[col] = pd.to_numeric(df[col], errors='coerce')
         df.dropna(subset=numeric_cols, inplace=True)
         
-        # Фильтры для "проблем"
         low_perf = df[df['Выполнение (%)'] < 80]
         latecomers = df[df['Опозданий (шт)'] > 0]
         long_pauses = df[df['Макс. пауза (мин)'] > (VOICE_TIMEOUT_MINUTES * 1.5)]
@@ -730,68 +707,43 @@ def find_problem_zones(call: types.CallbackQuery):
         if not low_perf.empty:
             report_lines.append("*📉 Низкое выполнение плана (<80%):*")
             for _, row in low_perf.iterrows():
-                report_lines.append(f" - {row['Тег Ведущего']} ({row['Дата']}): *{row['Выполнение (%)']:.0f}%*")
+                report_lines.append(f" - {row.get('Тег Ведущего', 'N/A')} ({row.get('Дата', 'N/A')}): *{row['Выполнение (%)']:.0f}%*")
         
         if not latecomers.empty:
             report_lines.append("\n*⏳ Опоздания с перерывов:*")
             for _, row in latecomers.iterrows():
-                report_lines.append(f" - {row['Тег Ведущего']} ({row['Дата']}): *{int(row['Опозданий (шт)'])}* раз(а)")
+                report_lines.append(f" - {row.get('Тег Ведущего', 'N/A')} ({row.get('Дата', 'N/A')}): *{int(row['Опозданий (шт)'])}* раз(а)")
 
         if not long_pauses.empty:
             report_lines.append("\n*⏱️ Слишком долгие паузы:*")
             for _, row in long_pauses.iterrows():
-                report_lines.append(f" - {row['Тег Ведущего']} ({row['Дата']}): макс. пауза *{row['Макс. пауза (мин)']:.0f} мин*")
+                report_lines.append(f" - {row.get('Тег Ведущего', 'N/A')} ({row.get('Дата', 'N/A')}): макс. пауза *{row['Макс. пауза (мин)']:.0f} мин*")
         
         if len(report_lines) == 1:
-            bot.send_message(call.message.chat.id, "✅ Проблемных зон по основным критериям не найдено. Отличная работа!")
+            bot.send_message(chat_id, "✅ Проблемных зон по основным критериям не найдено. Отличная работа!")
         else:
-            bot.send_message(call.message.chat.id, "\n".join(report_lines))
+            bot.send_message(chat_id, "\n".join(report_lines))
     except Exception as e:
         logging.error(f"Ошибка поиска проблемных зон: {e}")
-        bot.send_message(call.message.chat.id, f"Произошла ошибка при анализе: {e}")
+        bot.send_message(chat_id, f"Произошла ошибка при анализе: {e}")
 
-def request_broadcast_text(message: types.Message):
-    msg = bot.send_message(message.chat.id, "Введите текст для массовой рассылки всем чатам. Для отмены введите /cancel.")
+def request_broadcast_text(chat_id: int):
+    msg = bot.send_message(chat_id, "Введите текст для массовой рассылки всем чатам. Для отмены введите /cancel.")
     bot.register_next_step_handler(msg, process_broadcast_text)
 
-def process_broadcast_text(message: types.Message):
-    if message.text == '/cancel':
-        return bot.send_message(message.chat.id, "Рассылка отменена.")
-    if message.from_user.id != BOSS_ID: return
-    
-    text_to_send = message.text
-    if not text_to_send: return bot.reply_to(message, "Текст рассылки не может быть пустым.")
-    
-    sent_count = 0
-    total_chats = len(list(chat_configs.keys()))
-    bot.send_message(message.chat.id, f"Начинаю рассылку в {total_chats} чатов...")
-    
-    for chat_id_str in chat_configs.keys():
-        try:
-            bot.send_message(int(chat_id_str), f"❗️ **Важное объявление от руководства:**\n\n{text_to_send}")
-            sent_count += 1
-            time.sleep(0.1) # Небольшая задержка, чтобы не превышать лимиты Telegram
-        except Exception as e:
-            logging.error(f"Не удалось отправить рассылку в чат {chat_id_str}: {e}")
-    
-    bot.send_message(message.chat.id, f"✅ Рассылка успешно отправлена в {sent_count} из {total_chats} чатов.")
-
-def restart_shift(call: types.CallbackQuery):
-    chat_id = call.message.chat.id
+def restart_shift(chat_id: int, user_id: int):
     if chat_id in chat_data and chat_data[chat_id].get('main_id') is not None:
         init_shift_data(chat_id)
         bot.send_message(chat_id, "🔄 Смена перезапущена. Текущий главный и план сброшены.")
-        save_history_event(chat_id, call.from_user.id, get_username(call.from_user), "Перезапустил смену")
+        save_history_event(chat_id, user_id, get_username(bot.get_chat_member(chat_id, user_id).user), "Перезапустил смену")
     else:
         bot.send_message(chat_id, "Активной смены в этом чате и так не было.")
 
-def force_report(call: types.CallbackQuery):
-    chat_id = call.message.chat.id
+def force_report(chat_id: int):
     bot.send_message(chat_id, "⏳ Формирую финальный отчет досрочно...")
     send_end_of_shift_report_for_chat(chat_id)
 
-def export_history(call: types.CallbackQuery):
-    chat_id = call.message.chat.id
+def export_history(chat_id: int):
     history = user_history.get(chat_id)
     if not history:
         return bot.send_message(chat_id, "История событий для текущей смены пуста.")
@@ -805,6 +757,20 @@ def export_history(call: types.CallbackQuery):
     except Exception as e:
         logging.error(f"Ошибка при выгрузке истории: {e}")
         bot.send_message(chat_id, "Произошла ошибка при создании файла истории.")
+
+def show_setup_menu(chat_id: int):
+    config = chat_configs.get(chat_id, {})
+    text = (
+        f"⚙️ **Настройки чата: {get_chat_title(chat_id)}**\n\n"
+        f"*Бренд:* `{config.get('brand', 'Не задан')}`\n"
+        f"*Город:* `{config.get('city', 'Не задан')}`\n"
+        f"*Часовой пояс:* `{config.get('timezone', 'Не задан (МСК по умолч.)')}`\n"
+        f"*График смены:* `{config.get('start_time', 'Н/Д')} - {config.get('end_time', 'Н/Д')}`\n"
+        f"*План по ГС:* `{config.get('default_goal', EXPECTED_VOICES_PER_SHIFT)}`\n\n"
+        "Отправьте команду для изменения параметра:\n"
+        "`/setup <бренд> <город>`\n`/set_timezone +3`\n`/тайминг 19:00 04:00`\n`/setgoal <число>`"
+    )
+    bot.send_message(chat_id, text, parse_mode="Markdown")
         
 # ========================================
 #   УПРАВЛЕНИЕ РЕКЛАМОЙ (из /admin)
