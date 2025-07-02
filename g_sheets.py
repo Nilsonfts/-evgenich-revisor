@@ -33,9 +33,17 @@ def get_sheet() -> Optional[gspread.Worksheet]:
 def create_sheet_header_if_needed(worksheet: gspread.Worksheet):
     """Создает шапку в таблице, если она пустая."""
     try:
+        # Проверяем значение в первой ячейке, чтобы определить, нужна ли шапка
         if worksheet.acell('A1').value is None:
-            headers = ["Дата", "ID Чата", "Название Чата", "Бренд", "Город", "ID Ведущего", "Тег Ведущего", "Голосовых (шт)", "План (шт)", "Выполнение (%)", "Перерывов (шт)", "Опозданий (шт)", "Средний ритм (мин)", "Макс. пауза (мин)", "Ср. длина ГС (сек)", "Рекомендация", "Затронутые темы"]
+            headers = [
+                "Дата", "ID Чата", "Название Чата", "Бренд", "Город",
+                "ID Ведущего", "Тег Ведущего", "Голосовых (шт)", "План (шт)",
+                "Выполнение (%)", "Перерывов (шт)", "Опозданий (шт)",
+                "Средний ритм (мин)", "Макс. пауза (мин)", "Ср. длина ГС (сек)",
+                "Рекомендация", "Затронутые темы"
+            ]
             worksheet.append_row(headers, value_input_option='USER_ENTERED')
+            # Форматируем шапку жирным и центрируем
             worksheet.format('A1:R1', {'textFormat': {'bold': True}, 'horizontalAlignment': 'CENTER'})
             logging.info("Создана шапка в Google Таблице.")
     except Exception as e:
@@ -45,12 +53,15 @@ def append_shift_to_google_sheet(bot, chat_id: int, data: dict, analytical_concl
     """Добавляет строку с отчетом о смене в Google Таблицу."""
     worksheet = get_sheet()
     if not worksheet:
+        logging.error(f"Выгрузка в Google Sheets для чата {chat_id} невозможна: лист не найден.")
         return
+        
     create_sheet_header_if_needed(worksheet)
 
     main_id = data.get('main_id')
     user_data = data.get('users', {}).get(main_id)
     if not user_data:
+        logging.warning(f"Нет данных по ведущему для выгрузки в чате {chat_id}.")
         return
 
     now_moscow = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
@@ -70,14 +81,25 @@ def append_shift_to_google_sheet(bot, chat_id: int, data: dict, analytical_concl
 
     row_data = [
         data.get('shift_start', now_moscow).strftime('%d.%m.%Y'),
-        chat_id, get_chat_title(bot, chat_id), brand, city, main_id,
-        user_data.get('username', 'N/A'), user_data.get('count', 0),
-        shift_goal, f"{plan_percent:.0f}%", user_data.get('breaks_count', 0),
-        user_data.get('late_returns', 0), f"{avg_delta:.1f}", f"{max_pause:.1f}",
-        f"{avg_duration:.1f}", analytical_conclusion, recognized_ads_str
+        chat_id,
+        get_chat_title(bot, chat_id),  # Передаем bot в get_chat_title
+        brand,
+        city,
+        main_id,
+        user_data.get('username', 'N/A'),
+        user_data.get('count', 0),
+        shift_goal,
+        f"{plan_percent:.0f}%",
+        user_data.get('breaks_count', 0),
+        user_data.get('late_returns', 0),
+        f"{avg_delta:.1f}",
+        f"{max_pause:.1f}",
+        f"{avg_duration:.1f}",
+        analytical_conclusion,
+        recognized_ads_str
     ]
     try:
         worksheet.append_row(row_data, value_input_option='USER_ENTERED')
         logging.info(f"Данные по смене в чате {chat_id} успешно добавлены в Google Таблицу.")
     except Exception as e:
-        logging.error(f"Не удалось добавить данные в Google Таблицу: {e}")
+        logging.error(f"Не удалось добавить данные в Google Таблицу для чата {chat_id}: {e}")
