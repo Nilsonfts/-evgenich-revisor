@@ -32,6 +32,10 @@ try:
 except ImportError:
     client = None
 
+# Глобальный словарь для отслеживания предложений о передаче смены
+# Формат: { chat_id: { 'from_id': int, 'to_id': int, 'message_id': int, 'timer': Timer } }
+pending_transfers = {}
+
 
 def register_handlers(bot):
     """Регистрирует все обработчики сообщений и колбэков для бота."""
@@ -180,6 +184,95 @@ def register_handlers(bot):
         handle_user_return(bot, chat_id, user_id)
 
     # ========================================
+    #   НОВЫЙ ФУНКЦИОНАЛ: ПЕРЕДАЧА СМЕНЫ
+    # ========================================
+    def cancel_transfer(chat_id: int):
+        """Отменяет предложение о передаче смены по таймауту."""
+        if chat_id in pending_transfers:
+            transfer_info = pending_transfers.pop(chat_id)
+            try:
+                bot.edit_message_reply_markup(chat_id, transfer_info['message_id'], reply_markup=None)
+                bot.send_message(chat_id, "Время на принятие смены вышло. Предложение аннулировано.")
+            except Exception as e:
+                logging.warning(f"Не удалось отменить передачу смены (сообщение могло быть удалено): {e}")
+
+    @bot.message_handler(commands=['передать'])
+    def handle_shift_transfer_request(message: types.Message):
+        chat_id = message.chat.id
+        from_user = message.from_user
+        
+        if chat_data.get(chat_id, {}).get('main_id') != from_user.id:
+            return bot.reply_to(message, "Только текущий главный на смене может передать ее.")
+
+        if not message.reply_to_message:
+            return bot.reply_to(message, "Чтобы передать смену, ответьте этой командой на любое сообщение пользователя, которому вы хотите ее передать.")
+
+        to_user = message.reply_to_message.from_user
+        if to_user.is_bot:
+            return bot.reply_to(message, "Нельзя передать смену боту.")
+        if to_user.id == from_user.id:
+            return bot.reply_to(message, "Нельзя передать смену самому себе.")
+
+        if chat_id in pending_transfers:
+            return bot.reply_to(message, "В данный момент уже есть активное предложение о передаче смены. Дождитесь его завершения.")
+
+        from_username = get_username(from_user)
+        to_username = get_username(to_user)
+
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("✅ Принять смену", callback_data=f"transfer_accept_{to_user.id}"))
+        
+        sent_message = bot.send_message(chat_id, 
+            f"🤝 {from_username} предлагает передать смену вам, {to_username}.\n"
+            f"Нажмите кнопку ниже в течение 5 минут, чтобы подтвердить.",
+            reply_markup=markup
+        )
+        
+        timer = threading.Timer(300, cancel_transfer, args=[chat_id])
+        timer.start()
+        
+        pending_transfers[chat_id] = {
+            'from_id': from_user.id,
+            'from_username': from_username,
+            'to_id': to_user.id,
+            'to_username': to_username,
+            'message_id': sent_message.message_id,
+            'timer': timer
+        }
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith('transfer_accept_'))
+    def handle_shift_transfer_accept(call: types.CallbackQuery):
+        chat_id = call.message.chat.id
+        user_id = call.from_user.id
+        
+        if chat_id not in pending_transfers:
+            return bot.answer_callback_query(call.id, "Предложение о передаче смены уже неактуально.", show_alert=True)
+        
+        transfer_info = pending_transfers[chat_id]
+        
+        if user_id != transfer_info['to_id']:
+            return bot.answer_callback_query(call.id, "Это предложение адресовано не вам.", show_alert=True)
+            
+        transfer_info['timer'].cancel()
+
+        chat_data[chat_id]['main_id'] = transfer_info['to_id']
+        chat_data[chat_id]['main_username'] = transfer_info['to_username']
+        
+        if transfer_info['to_id'] not in chat_data[chat_id]['users']:
+            chat_data[chat_id]['users'][transfer_info['to_id']] = init_user_data(transfer_info['to_id'], transfer_info['to_username'])
+
+        del pending_transfers[chat_id]
+        
+        bot.answer_callback_query(call.id, "Смена принята!")
+        try:
+            bot.delete_message(chat_id, call.message.message_id)
+        except Exception: pass
+        
+        bot.send_message(chat_id, f"👑 Смена успешно передана от {transfer_info['from_username']} к {transfer_info['to_username']}!")
+        save_history_event(chat_id, user_id, transfer_info['to_username'], f"Принял смену от {transfer_info['from_username']}")
+
+
+    # ========================================
     #   ПОЛЬЗОВАТЕЛЬСКИЕ КОМАНДЫ
     # ========================================
     @bot.message_handler(commands=['start', 'старт'])
@@ -260,128 +353,97 @@ def register_handlers(bot):
             logging.error(f"Ошибка анализа Google Sheets для /сводка: {e}")
             bot.send_message(message.chat.id, "Произошла ошибка при анализе данных из таблицы.")
 
-    @bot.message_handler(commands=['help', 'справка'])
+    @bot.message_handler(commands=['help'])
     def handle_help(message: types.Message):
-        user_id = message.from_user.id
-        is_user_admin = is_admin(bot, user_id, message.chat.id)
-        
         help_text_lines = [
-            "📖 *Справка по командам бота*", "\n---",
-            "**👤 Основные команды для ведущего:**",
-            "`/start` или `/старт` — Занять смену, если она свободна.",
-            "`/промежуточный` или `/check` — Показать свой личный отчет по текущей смене.",
-            "`/сводка` — Посмотреть свою общую статистику за все время.",
-            "Для перерыва просто напишите в чат `перерыв`, `обед` или `отдых`.",
-            "Для возвращения — `вернулся`, `на месте`.",
+            "📘 **Основные команды для ведущего:**\n",
+            "`/start` или `/старт`",
+            "Занять смену, если она свободна.\n",
+            "`/промежуточный` или `/check`",
+            "Показать свой личный отчет по текущей смене.\n",
+            "`/сводка`",
+            "Посмотреть свою общую статистику за все время.\n",
+            "`/передать`",
+            "Передать смену другому (нужно ответить на его сообщение).\n",
+            "☕️ Для перерыва просто напишите в чат `перерыв`, `обед` или `отдых`.",
+            "✅ Для возвращения — `вернулся`, `на месте`."
         ]
-        
-        if is_user_admin:
-            help_text_lines.extend([
-                "\n" + "="*20,
-                "**🛠️ РАСШИРЕННАЯ СПРАВКА ДЛЯ АДМИНИСТРАТОРА**\n",
-                "Основная команда для вызова панели: `/admin`",
-                "\n**Список команд, доступных через панель:**",
-                "`/admin status` — 📊 Показывает полный статус текущей смены: кто на смене, сколько сделано, статистика по паузам и т.д.",
-                "`/admin rating` — 📈 Выводит общий рейтинг всех ведущих на основе данных из Google Таблицы.",
-                "`/admin ads` — 📝 Открывает интерактивное меню для управления рекламными шаблонами (просмотр, добавление, удаление).",
-                "`/admin problems` — 🚨 Анализирует данные из Google Таблицы и подсвечивает смены с низкой эффективностью, опозданиями или слишком долгими паузами.",
-                "`/admin setup` — ⚙️ Показывает текущие настройки чата (бренд, город, график) и список команд для их изменения.",
-                "`/admin restart` — 🔄 Принудительно сбрасывает текущую смену. Потребуется новый /start для начала.",
-                "`/admin report` — ➡️ Завершает смену досрочно и отправляет финальный отчет.",
-                "`/admin log` — 📜 Выгружает текстовый файл с историей всех ключевых событий за текущую смену.",
-            ])
-            if user_id == BOSS_ID:
-                help_text_lines.append("`/admin broadcast` — 📢 Отправляет сообщение во все чаты, где работает бот (только для BOSS).")
-            
-            help_text_lines.extend([
-                "\n**Команды для прямой настройки чата:**",
-                "`/setup <бренд> <город>` — Устанавливает бренд и город для этого чата.",
-                "`/set_timezone <смещение>` — Устанавливает часовой пояс (например, `+3`).",
-                "`/тайминг <старт> <конец>` — Задает время начала и конца смены (например, `19:00 04:00`).",
-                "`/setgoal <число>` — Устанавливает план по количеству голосовых за смену."
-            ])
-        
         bot.reply_to(message, "\n".join(help_text_lines))
-    
-    # ========================================
-    #   ОБРАБОТЧИКИ КОМАНД НАСТРОЙКИ
-    # ========================================
-    @bot.message_handler(commands=['setup'])
-    @admin_required(bot)
-    def handle_setup(message):
-        chat_id = message.chat.id
-        try:
-            _, brand, city = message.text.split()
-            brand, city = brand.lower(), city.lower()
-            if chat_id not in chat_configs: chat_configs[chat_id] = {}
-            chat_configs[chat_id].update({'brand': brand, 'city': city})
-            save_json_data(CHAT_CONFIG_FILE, chat_configs)
-            bot.reply_to(message, f"✅ Чат успешно настроен!\n**Бренд:** `{brand}`\n**Город:** `{city}`")
-        except ValueError:
-            bot.reply_to(message, "Неверный формат. Используйте: `/setup <бренд> <город>`")
-
-    @bot.message_handler(commands=['set_timezone'])
-    @admin_required(bot)
-    def set_timezone(message):
-        chat_id = message.chat.id
-        try:
-            offset = message.text.split()[1]
-            tz_name = TIMEZONE_MAP.get(offset)
-            if not tz_name:
-                return bot.reply_to(message, f"❌ Неверный формат смещения. Доступно: {list(TIMEZONE_MAP.keys())}")
-            if chat_id not in chat_configs: chat_configs[chat_id] = {}
-            chat_configs[chat_id]['timezone'] = tz_name
-            save_json_data(CHAT_CONFIG_FILE, chat_configs)
-            local_time = datetime.datetime.now(pytz.timezone(tz_name)).strftime('%H:%M:%S')
-            bot.send_message(chat_id, f"✅ Часовой пояс установлен на *{tz_name}* (МСК{offset}).\nТекущее время: *{local_time}*.")
-        except IndexError:
-            bot.reply_to(message, "Пример использования: `/set_timezone +3`")
-
-    @bot.message_handler(commands=['тайминг'])
-    @admin_required(bot)
-    def set_shift_timing(message):
-        chat_id = message.chat.id
-        try:
-            _, start_time_str, end_time_str = message.text.split()
-            datetime.datetime.strptime(start_time_str, '%H:%M')
-            datetime.datetime.strptime(end_time_str, '%H:%M')
-            if chat_id not in chat_configs: chat_configs[chat_id] = {}
-            chat_configs[chat_id].update({'start_time': start_time_str, 'end_time': end_time_str})
-            save_json_data(CHAT_CONFIG_FILE, chat_configs)
-            bot.send_message(chat_id, f"✅ График смены установлен: с *{start_time_str}* до *{end_time_str}*.")
-        except (IndexError, ValueError):
-            bot.reply_to(message, "Неверный формат. Пример: `/тайминг 19:00 04:00`")
-
-    @bot.message_handler(commands=['setgoal'])
-    @admin_required(bot)
-    def set_default_goal(message):
-        chat_id = message.chat.id
-        try:
-            goal = int(message.text.split()[1])
-            if goal <= 0: raise ValueError
-            if chat_id not in chat_configs: chat_configs[chat_id] = {}
-            chat_configs[chat_id]['default_goal'] = goal
-            save_json_data(CHAT_CONFIG_FILE, chat_configs)
-            bot.send_message(chat_id, f"✅ План по умолчанию для новых смен в этом чате установлен: *{goal}* ГС.")
-        except (IndexError, ValueError):
-            bot.reply_to(message, "Неверный формат. Укажите положительное число. Пример: `/setgoal 20`")
 
     # ========================================
-    #   АДМИНИСТРАТИВНЫЕ ИНСТРУМЕНТЫ И МЕНЮ
+    #   АДМИНИСТРАТИВНЫЕ КОМАНДЫ
     # ========================================
 
-    # --- Хелперы для админ-команд (вложены для доступа к `bot`) ---
-    def show_shift_status(chat_id: int, **kwargs):
+    @bot.message_handler(commands=['admin'])
+    @admin_required(bot)
+    def handle_admin_panel(message: types.Message):
+        user_id = message.from_user.id
+        panel_text = [
+            "**⚜️ Панель работы администратора ⚜️**\n",
+            "`/status` — 📊 Статус текущей смены",
+            "`/rating` — 📈 Общий рейтинг сотрудников",
+            "`/ads` — 📝 Управление рекламными шаблонами",
+            "`/problems` — 🚨 Поиск проблемных зон",
+            "`/restart` — 🔄 Перезапустить смену",
+            "`/report` — ➡️ Отчет досрочно",
+            "`/log` — 📜 Выгрузить лог смены",
+        ]
+        if user_id == BOSS_ID:
+             panel_text.append("`/broadcast` — 📢 Рассылка (BOSS)")
+        
+        panel_text.append("\n*Для подробной расшифровки введите /adminhelp*")
+        bot.reply_to(message, "\n".join(panel_text))
+
+    @bot.message_handler(commands=['adminhelp'])
+    @admin_required(bot)
+    def handle_admin_help(message: types.Message):
+        help_text = [
+            "**🛠️ Расширенная справка для администратора**\n"
+            "====================\n"
+            "**АНАЛИТИКА И ОТЧЕТЫ:**\n",
+            "`/status` — 📊 Показывает полный статус *текущей смены*: кто на смене, сколько сделано, статистика по паузам и т.д.",
+            "`/rating` — 📈 Выводит общий рейтинг всех ведущих на основе данных из Google Таблицы.",
+            "`/problems` — 🚨 Анализирует данные из Google Таблицы и подсвечивает смены с низкой эффективностью, опозданиями или слишком долгими паузами.",
+            "`/log` — 📜 Выгружает текстовый файл с историей всех ключевых событий за *текущую* смену.",
+            "\n**УПРАВЛЕНИЕ СМЕНОЙ:**\n",
+            "`/restart` — 🔄 Принудительно сбрасывает *текущую* смену. Потребуется новый `/start` для начала.",
+            "`/report` — ➡️ Завершает смену досрочно и отправляет финальный отчет.",
+            "\n**УПРАВЛЕНИЕ КОНТЕНТОМ:**\n",
+            "`/ads` — 📝 Открывает интерактивное меню для управления рекламными шаблонами (просмотр, добавление, удаление).",
+        ]
+        if message.from_user.id == BOSS_ID:
+            help_text.append("`/broadcast` — 📢 Отправляет сообщение во все чаты, где работает бот (только для BOSS).")
+        
+        setup_guide = [
+            "\n" + "-"*20,
+            "**💡 Как правильно настроить новый чат?**\n",
+            "*Все команды настройки нужно вводить по очереди прямо в чат:*\n",
+            "1️⃣ `/setup <бренд> <город>` — **Главный шаг!** Привязывает чат к бренду и городу. *Пример: `/setup my-brand moscow`*",
+            "2️⃣ `/set_timezone <смещение>` — Устанавливает часовой пояс. *Пример: `/set_timezone +3`*",
+            "3️⃣ `/тайминг <старт> <конец>` — Задает время смены. *Пример: `/тайминг 19:00 04:00`*",
+            "4️⃣ `/setgoal <число>` — Устанавливает норму ГС. *Пример: `/setgoal 25`*",
+            "\n*После выполнения этих 4 шагов бот полностью готов к работе в этом чате!*"
+        ]
+        help_text.extend(setup_guide)
+        bot.reply_to(message, "\n".join(help_text), parse_mode="Markdown")
+
+    @bot.message_handler(commands=['status'])
+    @admin_required(bot)
+    def command_status(message: types.Message):
+        chat_id = message.chat.id
         data = chat_data.get(chat_id)
         if not data or not data.get('main_id'):
             return bot.send_message(chat_id, "Смена в этом чате еще не началась.")
         user_data = data.get('users', {}).get(data['main_id'])
         if not user_data:
             return bot.send_message(chat_id, "В текущей смене нет данных о ведущем.")
-        report_text = get_full_report_text(chat_id, user_data, data)
-        bot.send_message(chat_id, report_text)
-
-    def show_overall_rating(chat_id: int, **kwargs):
+        report_text = get_full_report_text(bot, chat_id, user_data, data)
+        bot.send_message(chat_id, report_text, parse_mode="Markdown")
+    
+    @bot.message_handler(commands=['rating'])
+    @admin_required(bot)
+    def command_rating(message: types.Message):
+        chat_id = message.chat.id
         if not pd: return bot.send_message(chat_id, "Модуль для анализа данных (pandas) не загружен.")
         bot.send_message(chat_id, "📊 Анализирую общую статистику из Google Таблицы...")
         worksheet = get_sheet()
@@ -408,10 +470,13 @@ def register_handlers(bot):
                 report_lines.append(f"*{rank_icon}* {row['Тег Ведущего']} — *Ср. ГС:* `{row['avg_voices']:.1f}` | *Опоздания:* `{row['lateness_percent']:.0f}%` | *Смен:* `{row['total_shifts']}`")
             bot.send_message(chat_id, "\n".join(report_lines))
         except Exception as e:
-            logging.error(f"Ошибка анализа Google Sheets для /analyze: {e}")
+            logging.error(f"Ошибка анализа Google Sheets для /rating: {e}")
             bot.send_message(chat_id, "Произошла ошибка при анализе данных из таблицы.")
-
-    def find_problem_zones(chat_id: int, **kwargs):
+        
+    @bot.message_handler(commands=['problems'])
+    @admin_required(bot)
+    def command_problems(message: types.Message):
+        chat_id = message.chat.id
         if not pd: return bot.send_message(chat_id, "Модуль для анализа данных (pandas) не загружен.")
         bot.send_message(chat_id, "🚨 Ищу проблемные зоны в Google Таблице...")
         worksheet = get_sheet()
@@ -430,16 +495,16 @@ def register_handlers(bot):
             report_lines = ["🚨 **Анализ проблемных зон**\n"]
             if not low_perf.empty:
                 report_lines.append("*📉 Низкое выполнение плана (<80%):*")
-                for _, row in low_perf.iterrows():
-                    report_lines.append(f" - {row.get('Тег Ведущего', 'N/A')} ({row.get('Дата', 'N/A')}): *{row['Выполнение (%)']:.0f}%*")
+                for _, row in low_perf.sort_values(by='Дата', ascending=False).iterrows():
+                    report_lines.append(f" - {row.get('Дата', 'N/A')} {row.get('Тег Ведущего', 'N/A')}: *{row['Выполнение (%)']:.0f}%*")
             if not latecomers.empty:
                 report_lines.append("\n*⏳ Опоздания с перерывов:*")
-                for _, row in latecomers.iterrows():
-                    report_lines.append(f" - {row.get('Тег Ведущего', 'N/A')} ({row.get('Дата', 'N/A')}): *{int(row['Опозданий (шт)'])}* раз(а)")
+                for _, row in latecomers.sort_values(by='Дата', ascending=False).iterrows():
+                    report_lines.append(f" - {row.get('Дата', 'N/A')} {row.get('Тег Ведущего', 'N/A')}: *{int(row['Опозданий (шт)'])}* раз(а)")
             if not long_pauses.empty:
                 report_lines.append("\n*⏱️ Слишком долгие паузы:*")
-                for _, row in long_pauses.iterrows():
-                    report_lines.append(f" - {row.get('Тег Ведущего', 'N/A')} ({row.get('Дата', 'N/A')}): макс. пауза *{row['Макс. пауза (мин)']:.0f} мин*")
+                for _, row in long_pauses.sort_values(by='Дата', ascending=False).iterrows():
+                    report_lines.append(f" - {row.get('Дата', 'N/A')} {row.get('Тег Ведущего', 'N/A')}: макс. пауза *{row['Макс. пауза (мин)']:.0f} мин*")
             if len(report_lines) == 1:
                 bot.send_message(chat_id, "✅ Проблемных зон по основным критериям не найдено. Отличная работа!")
             else:
@@ -447,11 +512,48 @@ def register_handlers(bot):
         except Exception as e:
             logging.error(f"Ошибка поиска проблемных зон: {e}")
             bot.send_message(chat_id, f"Произошла ошибка при анализе: {e}")
+        
+    @bot.message_handler(commands=['restart'])
+    @admin_required(bot)
+    def command_restart(message: types.Message):
+        chat_id = message.chat.id
+        if chat_id in chat_data and chat_data[chat_id].get('main_id') is not None:
+            init_shift_data(chat_id)
+            bot.send_message(chat_id, "🔄 Смена перезапущена администратором. Текущий главный и план сброшены.")
+            save_history_event(chat_id, message.from_user.id, get_username(message.from_user), "Перезапустил смену")
+        else:
+            bot.send_message(chat_id, "Активной смены в этом чате и так не было.")
 
-    def request_broadcast_text(chat_id: int, user_id: int, **kwargs):
-        if user_id != BOSS_ID:
-            return bot.send_message(chat_id, "⛔️ Эта команда доступна только для BOSS.")
-        msg = bot.send_message(chat_id, "Введите текст для массовой рассылки всем чатам. Для отмены введите /cancel.")
+    @bot.message_handler(commands=['report'])
+    @admin_required(bot)
+    def command_report(message: types.Message):
+        bot.send_message(message.chat.id, "⏳ Формирую финальный отчет досрочно по команде администратора...")
+        send_end_of_shift_report_for_chat(bot, message.chat.id)
+
+    @bot.message_handler(commands=['log'])
+    @admin_required(bot)
+    def command_log(message: types.Message):
+        chat_id = message.chat.id
+        history = user_history.get(chat_id)
+        if not history:
+            return bot.send_message(chat_id, "История событий для текущей смены пуста.")
+        try:
+            filename = f"history_{chat_id}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write(f"История событий для чата: {get_chat_title(bot, chat_id)}\n" + "="*40 + "\n" + "\n".join(history))
+            with open(filename, 'rb') as f_rb:
+                bot.send_document(chat_id, f_rb, caption="Лог событий текущей смены.")
+            os.remove(filename)
+        except Exception as e:
+            logging.error(f"Ошибка при выгрузке истории: {e}")
+            bot.send_message(chat_id, "Произошла ошибка при создании файла истории.")
+            
+    @bot.message_handler(commands=['broadcast'])
+    @admin_required(bot)
+    def command_broadcast(message: types.Message):
+        if message.from_user.id != BOSS_ID:
+            return bot.send_message(message.chat.id, "⛔️ Эта команда доступна только для BOSS.")
+        msg = bot.send_message(message.chat.id, "Введите текст для массовой рассылки всем чатам. Для отмены введите /cancel.")
         bot.register_next_step_handler(msg, process_broadcast_text)
         
     def process_broadcast_text(message: types.Message):
@@ -472,55 +574,76 @@ def register_handlers(bot):
                 logging.error(f"Не удалось отправить рассылку в чат {chat_id_str}: {e}")
         bot.send_message(message.chat.id, f"✅ Рассылка успешно отправлена в {sent_count} из {total_chats} чатов.")
 
-    def restart_shift(chat_id: int, user_id: int, **kwargs):
-        if chat_id in chat_data and chat_data[chat_id].get('main_id') is not None:
-            init_shift_data(chat_id)
-            bot.send_message(chat_id, "🔄 Смена перезапущена. Текущий главный и план сброшены.")
-            save_history_event(chat_id, user_id, get_username(bot.get_chat_member(chat_id, user_id).user), "Перезапустил смену")
-        else:
-            bot.send_message(chat_id, "Активной смены в этом чате и так не было.")
-
-    def force_report(chat_id: int, **kwargs):
-        bot.send_message(chat_id, "⏳ Формирую финальный отчет досрочно...")
-        send_end_of_shift_report_for_chat(bot, chat_id)
-
-    def export_history(chat_id: int, **kwargs):
-        history = user_history.get(chat_id)
-        if not history:
-            return bot.send_message(chat_id, "История событий для текущей смены пуста.")
+    @bot.message_handler(commands=['setup'])
+    @admin_required(bot)
+    def handle_setup(message: types.Message):
+        chat_id = message.chat.id
         try:
-            filename = f"history_{chat_id}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-            with open(filename, 'w', encoding='utf-8') as f:
-                f.write(f"История событий для чата: {get_chat_title(bot, chat_id)}\n" + "="*40 + "\n" + "\n".join(history))
-            with open(filename, 'rb') as f_rb:
-                bot.send_document(chat_id, f_rb, caption="Лог событий текущей смены.")
-            os.remove(filename)
-        except Exception as e:
-            logging.error(f"Ошибка при выгрузке истории: {e}")
-            bot.send_message(chat_id, "Произошла ошибка при создании файла истории.")
+            _, brand, city = message.text.split(maxsplit=2)
+            brand, city = brand.lower(), city.lower()
+            if chat_id not in chat_configs: chat_configs[chat_id] = {}
+            chat_configs[chat_id].update({'brand': brand, 'city': city})
+            save_json_data(CHAT_CONFIG_FILE, chat_configs)
+            bot.reply_to(message, f"✅ Чат успешно настроен!\n**Бренд:** `{brand}`\n**Город:** `{city}`")
+        except ValueError:
+            bot.reply_to(message, "Неверный формат. Используйте: `/setup <бренд> <город>`")
 
-    def show_setup_menu(chat_id: int, **kwargs):
-        config = chat_configs.get(chat_id, {})
-        text = (
-            f"⚙️ **Настройки чата: {get_chat_title(bot, chat_id)}**\n\n"
-            f"*Бренд:* `{config.get('brand', 'Не задан')}`\n"
-            f"*Город:* `{config.get('city', 'Не задан')}`\n"
-            f"*Часовой пояс:* `{config.get('timezone', 'Не задан (МСК по умолч.)')}`\n"
-            f"*График смены:* `{config.get('start_time', 'Н/Д')} - {config.get('end_time', 'Н/Д')}`\n"
-            f"*План по ГС:* `{config.get('default_goal', EXPECTED_VOICES_PER_SHIFT)}`\n\n"
-            "Отправьте команду для изменения параметра:\n"
-            "`/setup <бренд> <город>`\n`/set_timezone +3`\n`/тайминг 19:00 04:00`\n`/setgoal <число>`"
-        )
-        bot.send_message(chat_id, text, parse_mode="Markdown")
+    @bot.message_handler(commands=['set_timezone'])
+    @admin_required(bot)
+    def set_timezone(message: types.Message):
+        chat_id = message.chat.id
+        try:
+            offset = message.text.split()[1]
+            tz_name = TIMEZONE_MAP.get(offset)
+            if not tz_name:
+                return bot.reply_to(message, f"❌ Неверный формат смещения. Доступно: {list(TIMEZONE_MAP.keys())}")
+            if chat_id not in chat_configs: chat_configs[chat_id] = {}
+            chat_configs[chat_id]['timezone'] = tz_name
+            save_json_data(CHAT_CONFIG_FILE, chat_configs)
+            local_time = datetime.datetime.now(pytz.timezone(tz_name)).strftime('%H:%M:%S')
+            bot.send_message(chat_id, f"✅ Часовой пояс установлен на *{tz_name}* (МСК{offset}).\nТекущее время: *{local_time}*.")
+        except IndexError:
+            bot.reply_to(message, "Пример использования: `/set_timezone +3`")
+
+    @bot.message_handler(commands=['тайминг'])
+    @admin_required(bot)
+    def set_shift_timing(message: types.Message):
+        chat_id = message.chat.id
+        try:
+            _, start_time_str, end_time_str = message.text.split()
+            datetime.datetime.strptime(start_time_str, '%H:%M')
+            datetime.datetime.strptime(end_time_str, '%H:%M')
+            if chat_id not in chat_configs: chat_configs[chat_id] = {}
+            chat_configs[chat_id].update({'start_time': start_time_str, 'end_time': end_time_str})
+            save_json_data(CHAT_CONFIG_FILE, chat_configs)
+            bot.send_message(chat_id, f"✅ График смены установлен: с *{start_time_str}* до *{end_time_str}*.")
+        except (IndexError, ValueError):
+            bot.reply_to(message, "Неверный формат. Пример: `/тайминг 19:00 04:00`")
+
+    @bot.message_handler(commands=['setgoal'])
+    @admin_required(bot)
+    def set_default_goal(message: types.Message):
+        chat_id = message.chat.id
+        try:
+            goal = int(message.text.split()[1])
+            if goal <= 0: raise ValueError
+            if chat_id not in chat_configs: chat_configs[chat_id] = {}
+            chat_configs[chat_id]['default_goal'] = goal
+            save_json_data(CHAT_CONFIG_FILE, chat_configs)
+            bot.send_message(chat_id, f"✅ План по умолчанию для новых смен в этом чате установлен: *{goal}* ГС.")
+        except (IndexError, ValueError):
+            bot.reply_to(message, "Неверный формат. Укажите положительное число. Пример: `/setgoal 20`")
         
-    def show_ad_brands_menu(chat_id: int, **kwargs):
+    @bot.message_handler(commands=['ads'])
+    @admin_required(bot)
+    def command_ads(message: types.Message):
         markup = types.InlineKeyboardMarkup(row_width=2)
         brands = list(ad_templates.keys())
         for brand in brands:
             markup.add(types.InlineKeyboardButton(brand.upper(), callback_data=f"ad_brand_{brand}"))
         markup.add(types.InlineKeyboardButton("➕ Добавить новый бренд", callback_data="ad_addbrand_form"))
-        bot.send_message(chat_id, "Выберите бренд для управления рекламой:", reply_markup=markup)
-
+        bot.send_message(message.chat.id, "📝 Выберите бренд для управления рекламой:", reply_markup=markup)
+        
     def show_ad_cities_menu(message: types.Message, brand: str):
         markup = types.InlineKeyboardMarkup(row_width=2)
         cities = list(ad_templates.get(brand, {}).keys())
@@ -551,55 +674,6 @@ def register_handlers(bot):
             markup.add(types.InlineKeyboardButton(f"❌ {tpl_key}", callback_data=f"ad_delete_{brand}_{city}_{tpl_key}"))
         markup.add(types.InlineKeyboardButton("« Назад", callback_data=f"ad_city_{brand}_{city}"))
         bot.edit_message_text("Выберите шаблон для удаления:", message.chat.id, message.message_id, reply_markup=markup)
-    
-    # --- Основной обработчик /admin ---
-    @bot.message_handler(commands=['admin'])
-    @admin_required(bot)
-    def handle_admin(message: types.Message):
-        chat_id = message.chat.id
-        user_id = message.from_user.id
-        
-        args = message.text.split()
-        
-        admin_commands = {
-            "status": show_shift_status,
-            "rating": show_overall_rating,
-            "ads": show_ad_brands_menu,
-            "problems": find_problem_zones,
-            "setup": show_setup_menu,
-            "restart": restart_shift,
-            "report": force_report,
-            "log": export_history,
-            "broadcast": request_broadcast_text
-        }
-        
-        if len(args) < 2:
-            panel_text = [
-                "**Панель работы администратора**\n",
-                "`/admin status` — 📊 Статус текущей смены",
-                "`/admin rating` — 📈 Общий рейтинг сотрудников",
-                "`/admin ads` — 📝 Управление рекламными шаблонами (интерактивно)",
-                "`/admin problems` — 🚨 Поиск проблемных зон в статистике",
-                "`/admin setup` — ⚙️ Показать/изменить настройки чата",
-                "`/admin restart` — 🔄 Перезапустить смену в этом чате",
-                "`/admin report` — ➡️ Сформировать отчет досрочно",
-                "`/admin log` — 📜 Выгрузить лог событий текущей смены",
-            ]
-            if user_id == BOSS_ID:
-                 panel_text.append("`/admin broadcast` — 📢 Сделать рассылку во все чаты (BOSS)")
-            
-            panel_text.append("\n*Для подробной расшифровки введите /help*")
-            bot.reply_to(message, "\n".join(panel_text))
-            return
-            
-        action = args[1].lower()
-        command_func = admin_commands.get(action)
-        
-        if command_func:
-            command_func(chat_id=chat_id, user_id=user_id, message=message)
-        else:
-            bot.reply_to(message, f"🤷‍♂️ Неизвестная команда: `{action}`. Введите `/admin` для вызова панели.")
-
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith('ad_'))
     def handle_ad_callbacks(call: types.CallbackQuery):
@@ -608,7 +682,7 @@ def register_handlers(bot):
         
         message = call.message
         
-        try:
+        try: # Пытаемся удалить исходное сообщение с кнопками
             bot.delete_message(message.chat.id, message.message_id)
         except Exception as e:
             logging.info(f"Не удалось удалить сообщение при обработке ad_callback: {e}")
@@ -626,8 +700,7 @@ def register_handlers(bot):
         elif action == "view":
             brand, city = parts[2], parts[3]
             templates = ad_templates.get(brand, {}).get(city, {})
-            if not templates:
-                text = "Шаблонов для этого города пока нет."
+            if not templates: text = "Шаблонов для этого города пока нет."
             else:
                 text_lines = [f"📄 **Шаблоны для {brand.upper()} / {city.capitalize()}**\n"]
                 for name, content in templates.items():
@@ -652,7 +725,7 @@ def register_handlers(bot):
                 else:
                     bot.answer_callback_query(call.id, "Ошибка сохранения!", show_alert=True)
         elif action == 'backtobrand':
-            show_ad_brands_menu(chat_id=message.chat.id, message=message)
+            command_ads(message)
         elif action == 'backtocity':
             brand = parts[2]
             show_ad_cities_menu(message, brand)
@@ -683,7 +756,7 @@ def register_handlers(bot):
             
     # ====== DEBUG: ловим ВСЕ необработанные callback_query ======
     @bot.callback_query_handler(func=lambda call: True)
-    def _debug_all_callbacks(call):
+    def _debug_all_callbacks(call: types.CallbackQuery):
         try:
             bot.answer_callback_query(call.id, f"DBG: {call.data}", show_alert=True)
         except Exception:
