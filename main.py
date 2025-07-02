@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Финальная версия v16.0 (Динамический план):
-- Добавлена команда /limited для установки плана по ГС на текущую смену.
-- Все отчеты (промежуточные, итоговый, Google Sheets) адаптированы под динамический план.
-- Обновлена справка /help.
+Финальная версия v17.0 (с Напоминаниями):
+- Добавлены активные напоминания для ведущего.
+- Бот напоминает о затянувшемся перерыве каждые 2 минуты.
+- Бот напоминает о долгой паузе (40 мин без ГС).
+- Все тексты для напоминаний берутся из phrases.py.
 - Вся предыдущая функциональность сохранена.
 """
 
@@ -43,8 +44,8 @@ except ImportError:
     soviet_phrases = {
         "too_short": ["Слишком коротко!"],
         "accept": ["Принято."],
-        "return_demand": ["Пора возвращаться к работе."],
-        "voice_reminder": ["Вы давно не выходили в эфир."]
+        "return_demand": ["Товарищ, пора возвращаться к работе! Коллектив ждет."],
+        "voice_reminder": ["Вы давно не выходили в эфир. Не нарушайте план!"]
     }
 
 # ========================================
@@ -65,12 +66,16 @@ ADMIN_REPORT_CHAT_ID = -1002645821302
 CHAT_CONFIG_FILE = 'chat_configs.json'
 
 # --- Параметры смены ---
-EXPECTED_VOICES_PER_SHIFT = 15 # Это значение теперь используется как ПЛАН ПО УМОЛЧАНИЮ
+EXPECTED_VOICES_PER_SHIFT = 80
 VOICE_TIMEOUT_MINUTES = 40
 VOICE_MIN_DURATION_SECONDS = 3
 VOICE_COOLDOWN_SECONDS = 120
 BREAK_DURATION_MINUTES = 15
 BREAK_DELAY_MINUTES = 60
+
+# --- Ссылка на Google Таблицу для отчетов ---
+GOOGLE_SHEET_LINK_URL = "https://docs.google.com/spreadsheets/d/1Zj25HCub7GxSNmXeMv5bkSi7fvPll_2iOkP4GR2gYWs/edit?gid=0#gid=0"
+GOOGLE_SHEET_LINK_TEXT = "АНАЛИЗ РАБОТЫ ВЕДУЩИХ"
 
 # --- Карта часовых поясов ---
 TIMEZONE_MAP = {
@@ -100,13 +105,13 @@ chat_configs: Dict[int, dict] = {}
 # --- Загрузка шаблонов для анализа ---
 AD_TEMPLATES = {}
 try:
-    with open('ad_templates.json', 'r', encoding='utf-8') as f:
+    with open('ad_templates_perm_july.json', 'r', encoding='utf-8') as f:
         AD_TEMPLATES = json.load(f)
     logging.info(f"Успешно загружено {len(AD_TEMPLATES)} рекламных шаблонов.")
 except FileNotFoundError:
-    logging.warning("Файл 'ad_templates.json' не найден. Анализ контента будет невозможен.")
+    logging.warning("Файл 'ad_templates_perm_july.json' не найден. Анализ контента будет невозможен.")
 except json.JSONDecodeError:
-    logging.error("Ошибка в синтаксисе файла 'ad_templates.json'. Проверьте кавычки и запятые.")
+    logging.error("Ошибка в синтаксисе файла 'ad_templates_perm_july.json'.")
 
 
 # ========================================
@@ -184,7 +189,7 @@ def append_shift_to_google_sheet(chat_id, data, analytical_conclusion):
     if not user_data: return
 
     now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
-    shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT) # ИЗМЕНЕНИЕ: Используем динамический план
+    shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT)
     plan_percent = (user_data['count'] / shift_goal * 100) if shift_goal > 0 else 0
     avg_delta = sum(user_data['voice_deltas']) / len(user_data['voice_deltas']) if user_data['voice_deltas'] else 0
     max_pause = max(user_data['voice_deltas']) if user_data['voice_deltas'] else 0
@@ -195,7 +200,7 @@ def append_shift_to_google_sheet(chat_id, data, analytical_conclusion):
 
     row_data = [
         data.get('shift_start', now).strftime('%d.%m.%Y'), chat_id, get_chat_title(chat_id),
-        main_id, user_data['username'], user_data['count'], shift_goal, # ИЗМЕНЕНИЕ: Записываем актуальный план
+        main_id, user_data['username'], user_data['count'], shift_goal,
         f"{plan_percent:.0f}%", user_data['breaks_count'], user_data['late_returns'],
         f"{avg_delta:.1f}", f"{max_pause:.1f}", f"{avg_duration:.1f}",
         analytical_conclusion, recognized_ads_str
@@ -235,16 +240,17 @@ def init_user_data(user_id, username):
         'late_returns': 0, 'last_voice_time': None, 'last_break_time': None, 
         'reminder_sent_at': None, 'response_times': [], 'voice_deltas': [], 
         'voice_durations': [], 'break_start_time': None,
-        'recognized_ads': []
+        'recognized_ads': [],
+        'voice_timeout_reminder_sent': False,
+        'last_break_reminder_time': None
     }
 
-# ИЗМЕНЕНИЕ: Функция инициализации смены теперь задает план по умолчанию
 def init_shift_data(chat_id):
     chat_data[chat_id] = {
         'main_id': None, 
         'users': {}, 
         'shift_start': datetime.datetime.now(pytz.timezone('Europe/Moscow')),
-        'shift_goal': EXPECTED_VOICES_PER_SHIFT # Устанавливаем план по умолчанию
+        'shift_goal': EXPECTED_VOICES_PER_SHIFT
     }
 
 def handle_user_return(chat_id, user_id):
@@ -335,7 +341,7 @@ def handle_start(message):
     from_user = message.from_user
     username = get_username(from_user)
     if chat_id not in chat_data:
-        init_shift_data(chat_id) # ИЗМЕНЕНИЕ: Используем новую функцию для инициализации смены
+        init_shift_data(chat_id)
     if from_user.id not in chat_data[chat_id]['users']:
         chat_data[chat_id]['users'][from_user.id] = init_user_data(from_user.id, username)
     if chat_data[chat_id].get('main_id') is not None:
@@ -351,7 +357,7 @@ def handle_start(message):
 def handle_restart(message):
     chat_id = message.chat.id
     if chat_id in chat_data and chat_data[chat_id].get('main_id') is not None:
-        init_shift_data(chat_id) # ИЗМЕНЕНИЕ: Полностью сбрасываем смену, включая кастомный план
+        init_shift_data(chat_id)
         bot.reply_to(message, "🔄 Смена перезапущена. Текущий главный и план сброшены.")
         save_history_event(chat_id, message.from_user.id, get_username(message.from_user), "Перезапустил смену")
     else:
@@ -372,7 +378,7 @@ def handle_check(message):
     if user_id != main_user_id:
         return bot.reply_to(message, f"Эту команду может использовать только текущий главный на смене: {main_user_data.get('username', 'Неизвестно')}.")
 
-    shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT) # ИЗМЕНЕНИЕ: Используем динамический план
+    shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT)
     plan_percent = (main_user_data['count'] / shift_goal * 100) if shift_goal > 0 else 0
     
     report_text = (
@@ -402,7 +408,7 @@ def handle_checkadmin(message):
     if main_user_data['username'].lower() != target_username.lower():
         return bot.reply_to(message, f"Указанный пользователь {target_username} не является главным на текущей смене. Сейчас на смене: {main_user_data['username']}")
 
-    shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT) # ИЗМЕНЕНИЕ: Используем динамический план
+    shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT)
     plan_percent = (main_user_data['count'] / shift_goal * 100) if shift_goal > 0 else 0
     report_lines = [
         f"📋 Промежуточный отчет ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})",
@@ -420,11 +426,9 @@ def handle_checkadmin(message):
     final_report = "\n".join(report_lines)
     bot.reply_to(message, final_report)
 
-# НОВАЯ КОМАНДА
 @bot.message_handler(commands=['limited', 'лимит'])
 @admin_required
 def handle_limit(message):
-    """(Только для админов) Устанавливает план по ГС на текущую смену."""
     chat_id = message.chat.id
     data = chat_data.get(chat_id)
 
@@ -447,7 +451,6 @@ def handle_limit(message):
         return bot.reply_to(message, "Неверный формат. Используйте: `/лимит <число>`")
     except ValueError:
         return bot.reply_to(message, "Укажите корректное число после команды.")
-
     
 @bot.message_handler(commands=['отчет'])
 @admin_required
@@ -559,7 +562,7 @@ def set_timezone(message):
         chat_configs[chat_id]['timezone'] = tz_name
         save_chat_configs()
         local_time = datetime.datetime.now(pytz.timezone(tz_name)).strftime('%H:%M:%S')
-        bot.reply_to(message, f"✅ Часовой пояс для этого чата установлен на *{tz_name}* (МСК{offset}).\nТекущее время: *{local_time}*.")
+        bot.send_message(message.chat.id, f"✅ Часовой пояс для этого чата установлен на *{tz_name}* (МСК{offset}).\nТекущее время: *{local_time}*.")
     except IndexError:
         bot.reply_to(message, "Пример использования:\n`/set_timezone +3`")
 
@@ -630,6 +633,7 @@ def handle_help(message):
 """
     bot.reply_to(message, help_text)
 
+
 # ========================================
 #   ОБРАБОТЧИКИ СООБЩЕНИЙ И ДЕЙСТВИЙ
 # ========================================
@@ -643,7 +647,7 @@ def handle_voice_message(message):
     now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
 
     if chat_id not in chat_data:
-        init_shift_data(chat_id) # ИЗМЕНЕНИЕ: Используем новую функцию
+        init_shift_data(chat_id)
     if user_id not in chat_data[chat_id]['users']:
         chat_data[chat_id]['users'][user_id] = init_user_data(user_id, username)
     if chat_data[chat_id].get('main_id') is None:
@@ -675,6 +679,7 @@ def handle_voice_message(message):
         user_data['count'] += 1
         user_data['last_voice_time'] = now
         user_data['voice_durations'].append(message.voice.duration)
+        user_data['voice_timeout_reminder_sent'] = False
 
         file_path = None
         try:
@@ -706,6 +711,7 @@ def handle_break_request(message):
         'break_start_time': datetime.datetime.now(pytz.timezone('Europe/Moscow')),
         'last_break_time': datetime.datetime.now(pytz.timezone('Europe/Moscow')),
         'breaks_count': user.get('breaks_count', 0) + 1,
+        'last_break_reminder_time': None
     })
     bot.reply_to(message, f"✅ Перерыв на {BREAK_DURATION_MINUTES} минут начат.")
     save_history_event(chat_id, user_id, get_username(message.from_user), "Ушел на перерыв")
@@ -727,13 +733,13 @@ def generate_detailed_report(chat_id: int, data: dict) -> list:
         return ["Главный на смене не был назначен или не проявил активности."]
     user = data['users'][main_id]
     now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
-    shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT) # ИЗМЕНЕНИЕ: Используем динамический план
+    shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT)
     avg_delta = sum(user['voice_deltas']) / len(user['voice_deltas']) if user['voice_deltas'] else 0
     max_pause = max(user['voice_deltas']) if user['voice_deltas'] else 0
     avg_duration = sum(user['voice_durations']) / len(user['voice_durations']) if user['voice_durations'] else 0
     plan_percent = (user['count'] / shift_goal * 100) if shift_goal > 0 else 0
     report = [
-        f"📋 Итоговый Отчет Смены ({data.get('shift_start', now).strftime('%d.%m.%Y')})",
+        f"📋 #ОТЧЕТ_ТЕКСТ_ВЕДУЩЕГО ({data.get('shift_start', now).strftime('%d.%m.%Y')})",
         f"🏢 Чат: {get_chat_title(chat_id)}",
         f"🎤 Ведущий: {user['username']}", "---",
         f"🗣️ Голосовых: {user['count']} из {shift_goal} ({plan_percent:.0f}%)",
@@ -783,21 +789,68 @@ def send_end_of_shift_report_for_chat(chat_id):
     if not data or not data.get('main_id'):
         logging.warning(f"Попытка закрыть смену в чате {chat_id}, но активной смены нет.")
         return
-    main_user_data = data['users'][data['main_id']]
-    shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT) # ИЗМЕНЕНИЕ: Используем динамический план
+    
+    main_user_data = data.get('users', {}).get(data.get('main_id'))
+    if not main_user_data:
+        logging.warning(f"Не найдены данные по ведущему в чате {chat_id}")
+        return
+
+    shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT)
     analytical_conclusion = generate_analytical_summary(main_user_data, shift_goal)
     append_shift_to_google_sheet(chat_id, data, analytical_conclusion)
+    
     report_lines = generate_detailed_report(chat_id, data)
     final_report = "\n".join(report_lines) + f"\n\n---\n🧠 **Рекомендация:**\n_{analytical_conclusion}_"
+
     try:
         bot.send_message(chat_id, final_report)
         if ADMIN_REPORT_CHAT_ID and chat_id != ADMIN_REPORT_CHAT_ID:
-            bot.send_message(ADMIN_REPORT_CHAT_ID, final_report)
+            link_markdown = f"[{GOOGLE_SHEET_LINK_TEXT}]({GOOGLE_SHEET_LINK_URL})"
+            admin_report = final_report + f"\n\n---\n📊 {link_markdown}"
+            bot.send_message(ADMIN_REPORT_CHAT_ID, admin_report, parse_mode="Markdown")
     except Exception as e:
         logging.error(f"Не удалось отправить итоговый отчет в чате {chat_id}: {e}")
+    
     if chat_id in user_history: del user_history[chat_id]
     if chat_id in chat_data: del chat_data[chat_id]
     logging.info(f"Данные смены для чата {chat_id} очищены.")
+
+def check_user_activity():
+    now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+    for chat_id, data in list(chat_data.items()):
+        if not data.get('main_id'):
+            continue
+
+        main_id = data['main_id']
+        user_data = data.get('users', {}).get(main_id)
+        if not user_data:
+            continue
+
+        # 1. Проверка затянувшегося перерыва
+        if user_data.get('on_break'):
+            break_start_time = user_data.get('break_start_time')
+            if break_start_time:
+                break_duration_minutes = (now - break_start_time).total_seconds() / 60
+                if break_duration_minutes > BREAK_DURATION_MINUTES:
+                    last_reminder = user_data.get('last_break_reminder_time')
+                    if not last_reminder or (now - last_reminder).total_seconds() > 120:
+                        try:
+                            bot.send_message(chat_id, f"@{user_data['username']}, {random.choice(soviet_phrases['return_demand'])}")
+                            user_data['last_break_reminder_time'] = now
+                        except Exception as e:
+                            logging.error(f"Не удалось отправить напоминание о перерыве в чат {chat_id}: {e}")
+            continue
+
+        # 2. Проверка долгого отсутствия голосовых
+        last_voice_time = user_data.get('last_voice_time')
+        if last_voice_time:
+            inactive_minutes = (now - last_voice_time).total_seconds() / 60
+            if inactive_minutes > VOICE_TIMEOUT_MINUTES and not user_data.get('voice_timeout_reminder_sent'):
+                try:
+                    bot.send_message(chat_id, f"@{user_data['username']}, {random.choice(soviet_phrases['voice_reminder'])}")
+                    user_data['voice_timeout_reminder_sent'] = True
+                except Exception as e:
+                    logging.error(f"Не удалось отправить напоминание о ГС в чат {chat_id}: {e}")
 
 def check_for_shift_end():
     for chat_id, config in list(chat_configs.items()):
@@ -820,12 +873,13 @@ def check_for_shift_end():
 def run_scheduler():
     load_chat_configs()
     schedule.every(1).minutes.do(check_for_shift_end)
+    schedule.every(1).minutes.do(check_user_activity)
     while True:
         schedule.run_pending()
         time.sleep(1)
 
 if __name__ == '__main__':
-    logging.info("🤖 Бот (версия 16.0, Динамический план) запущен...")
+    logging.info("🤖 Бот (версия 17.0, с Напоминаниями) запущен...")
     if not all([gspread, pd, openai]):
         logging.critical("Ключевые библиотеки (gspread, pandas, openai) не загружены. Функциональность будет ограничена.")
     else:
