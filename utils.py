@@ -113,3 +113,35 @@ def save_history_event(chat_id: int, user_id: int, username: str, event_descript
     user_history[chat_id].append(f"{now_str} | {username} ({user_id}) | {event_description}")
     # Для наглядности можно добавить print или logging
     logging.info(f"HISTORY [{chat_id}]: {username} - {event_description}")
+    def generate_detailed_report(chat_id: int, user_data: dict, data: dict) -> list:
+    """Собирает текстовый отчет на основе данных о смене."""
+    from config import EXPECTED_VOICES_PER_SHIFT
+
+    shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT)
+    plan_percent = (user_data['count'] / shift_goal * 100) if shift_goal > 0 else 0
+    avg_delta = sum(user_data['voice_deltas']) / len(user_data['voice_deltas']) if user_data.get('voice_deltas') else 0
+    max_pause = max(user_data.get('voice_deltas', [0]))
+    avg_duration = sum(user_data['voice_durations']) / len(user_data['voice_durations']) if user_data.get('voice_durations') else 0
+
+    report_lines = [
+        f"📋 **#ОТЧЕТ_ТЕКСТ_ВЕДУЩЕГО** ({data.get('shift_start', datetime.datetime.now()).strftime('%d.%m.%Y')})",
+        f"🎤 **Ведущий:** {user_data.get('username', 'N/A')}",
+        "\n---",
+        "**📊 Основная Статистика**",
+        f"**Голосовых:** {user_data.get('count', 0)} из {shift_goal} ({plan_percent:.0f}%)",
+        f"**Перерывов:** {user_data.get('breaks_count', 0)}",
+        f"**Опозданий:** {user_data.get('late_returns', 0)}",
+        "\n---",
+        "**📈 Аналитика Активности**",
+        f"**Средний ритм:** {avg_delta:.1f} мин/ГС" if avg_delta else "**Средний ритм:** Н/Д",
+        f"**Макс. пауза:** {max_pause:.1f} мин." if max_pause else "**Макс. пауза:** Н/Д",
+        f"**Ср. длина ГС:** {avg_duration:.1f} сек." if avg_duration else "**Ср. длина ГС:** Н/Д"
+    ]
+    
+    ad_counts = Counter(user_data.get('recognized_ads', []))
+    if ad_counts:
+        report_lines.append("\n---\n**📝 Анализ Контента**")
+        for ad, count in ad_counts.items():
+            report_lines.append(f"✔️ {ad} (x{count})")
+            
+    return report_lines
