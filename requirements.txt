@@ -1,5 +1,8 @@
-pyTelegramBotAPI==4.16.1
+pyTelegramBotAPI
 schedule
 pytz
 gspread
 google-auth-oauthlib
+pandas
+openai
+pydub
