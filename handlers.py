@@ -377,7 +377,7 @@ def get_full_report_text(chat_id: int, user_data: dict, data: dict) -> str:
     # ========================================
     #   АДМИНИСТРАТИВНЫЕ ИНСТРУМЕНТЫ И МЕНЮ
     # ========================================
-    
+
     # --- Вложенные функции, чтобы не засорять область видимости ---
     def show_shift_status(chat_id: int):
         data = chat_data.get(chat_id)
@@ -587,7 +587,6 @@ def get_full_report_text(chat_id: int, user_data: dict, data: dict) -> str:
     def handle_admin_callbacks(call: types.CallbackQuery):
         chat_id = call.message.chat.id
         user_id = call.from_user.id
-        message_id = call.message.message_id # Сохраняем ID сообщения
         if not is_admin(bot, user_id, chat_id):
             return bot.answer_callback_query(call.id, "⛔️ Доступ запрещен!", show_alert=True)
         bot.answer_callback_query(call.id)
@@ -613,15 +612,12 @@ def get_full_report_text(chat_id: int, user_data: dict, data: dict) -> str:
             if user_id != BOSS_ID:
                 return bot.answer_callback_query(call.id, "⛔️ Только для BOSS!", show_alert=True)
             request_broadcast_text(chat_id)
-        elif action == 'main_menu': # Обработка кнопки "Назад в меню"
+        elif action == 'main_menu':
              try:
-                 # Просто вызываем функцию, которая отправляет основное меню
                  handle_admin_menu(call.message)
-                 # И удаляем старое сообщение с подменю
-                 bot.delete_message(chat_id, message_id)
+                 bot.delete_message(call.message.chat.id, call.message.message_id)
              except Exception as e:
                  logging.warning(f"Не удалось отредактировать/удалить сообщение в admin_main_menu: {e}")
-
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith('ad_'))
     def handle_ad_callbacks(call: types.CallbackQuery):
@@ -669,10 +665,9 @@ def get_full_report_text(chat_id: int, user_data: dict, data: dict) -> str:
         elif action == 'backtocity':
             brand = parts[2]
             show_ad_cities_menu(call.message, brand)
-        elif action == 'main_menu': # Обработка кнопки "Назад в меню" из подменю рекламы
+        elif action == 'main_menu':
             handle_admin_menu(call.message)
             bot.delete_message(call.message.chat.id, call.message.message_id)
-
 
     @bot.message_handler(func=lambda message: user_states.get(message.from_user.id, {}).get("state") == "awaiting_ad_template")
     def receive_ad_template_to_add(message: types.Message):
