@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Финальная версия бота v4.2:
-- Подключение к Google Sheets по ID (ключу) для максимальной надежности.
+Финальная версия бота v5.1:
+- Добавлена команда /testsheet для проверки соединения с Google.
 - Все предыдущие функции сохранены.
 """
 
@@ -29,10 +29,7 @@ except ImportError:
 
 # Импорт фраз
 try:
-    from phrases import (
-        soviet_phrases,
-        BREAK_KEYWORDS, RETURN_CONFIRM_WORDS
-    )
+    from phrases import soviet_phrases, BREAK_KEYWORDS, RETURN_CONFIRM_WORDS
 except ImportError:
     logging.warning("Файл 'phrases.py' не найден. Используются значения по умолчанию.")
     BREAK_KEYWORDS = ["перерыв", "отдых"]
@@ -72,89 +69,71 @@ def get_sheet():
     """Авторизуется и возвращает рабочий лист Google Таблицы по ключу."""
     if not gspread: return None
     try:
-        # Авторизация через переменную окружения
         creds_json_str = os.getenv("GOOGLE_CREDENTIALS_JSON")
-        if not creds_json_str:
-            logging.error("Переменная окружения GOOGLE_CREDENTIALS_JSON не найдена!")
+        sheet_key = os.getenv("GOOGLE_SHEET_KEY")
+        if not creds_json_str or not sheet_key:
+            logging.error("Переменные окружения для Google Sheets не найдены!")
             return None
+        
         creds_dict = json.loads(creds_json_str)
         gc = gspread.service_account_from_dict(creds_dict)
-        
-        # <<< ИЗМЕНЕНИЕ: Открываем таблицу по ключу, а не по имени >>>
-        sheet_key = os.getenv("GOOGLE_SHEET_KEY")
-        if not sheet_key:
-            logging.error("Переменная окружения GOOGLE_SHEET_KEY с ID таблицы не найдена!")
-            return None
-
         spreadsheet = gc.open_by_key(sheet_key)
-        worksheet = spreadsheet.sheet1
-        return worksheet
-        
+        return spreadsheet.sheet1
     except gspread.exceptions.SpreadsheetNotFound:
-        logging.error(f"Таблица с ключом не найдена. Проверьте ID таблицы и права доступа для сервисного аккаунта.")
+        logging.error(f"Таблица с ключом не найдена. Проверьте ID и права доступа для сервисного аккаунта.")
         return None
     except Exception as e:
         logging.error(f"Ошибка подключения к Google Sheets: {e}")
         return None
 
-def load_user_stats() -> Dict[int, Dict]:
-    stats = {}
-    worksheet = get_sheet()
-    if not worksheet:
-        logging.error("Не удалось загрузить лист для чтения статистики.")
-        return stats
-    
+def create_sheet_header_if_needed(worksheet):
+    """Создает шапку в таблице, если она пустая."""
     try:
-        records = worksheet.get_all_records()
-        for record in records:
-            if record.get('user_id'):
-                stats[int(record['user_id'])] = {
-                    'username': record.get('username'),
-                    'total_shifts': int(record.get('total_shifts', 0)),
-                    'total_voices': int(record.get('total_voices', 0)),
-                    'total_breaks': int(record.get('total_breaks', 0)),
-                    'total_lates': int(record.get('total_lates', 0))
-                }
+        if worksheet.acell('A1').value is None:
+            headers = [
+                "Дата", "ID Чата", "Название Чата", "ID Ведущего", "Тег Ведущего",
+                "Голосовых (шт)", "План (шт)", "Выполнение (%)", "Перерывов (шт)",
+                "Опозданий (шт)", "Средний ритм (мин)", "Макс. пауза (мин)", "Ср. длина ГС (сек)"
+            ]
+            worksheet.append_row(headers, value_input_option='USER_ENTERED')
+            worksheet.format('A1:M1', {'textFormat': {'bold': True}, 'horizontalAlignment': 'CENTER'})
+            logging.info("Создана шапка в Google Таблице.")
     except Exception as e:
-        logging.error(f"Ошибка при чтении данных из Google Таблицы: {e}")
-    return stats
+        logging.error(f"Не удалось создать шапку в Google Таблице: {e}")
 
-def save_user_stats(all_stats: Dict[int, Dict]):
+def append_shift_to_google_sheet(chat_id, data):
+    """Добавляет строку с итогами смены в Google Таблицу."""
     worksheet = get_sheet()
     if not worksheet:
-        logging.error("Не удалось загрузить лист для сохранения статистики.")
+        logging.error("Выгрузка в Google Sheets невозможна: лист не найден.")
         return
+
+    create_sheet_header_if_needed(worksheet)
     
+    main_id = data.get('main_id')
+    user_data = data.get('users', {}).get(main_id)
+    if not user_data: return
+    
+    now = datetime.datetime.now(moscow_tz)
+    plan_percent = (user_data['count'] / EXPECTED_VOICES_PER_SHIFT * 100) if EXPECTED_VOICES_PER_SHIFT > 0 else 0
+    avg_delta = sum(user_data['voice_deltas']) / len(user_data['voice_deltas']) if user_data['voice_deltas'] else 0
+    max_pause = max(user_data['voice_deltas']) if user_data['voice_deltas'] else 0
+    avg_duration = sum(user_data['voice_durations']) / len(user_data['voice_durations']) if user_data['voice_durations'] else 0
+
+    row_data = [
+        data.get('shift_start', now).strftime('%d.%m.%Y'),
+        chat_id, get_chat_title(chat_id),
+        main_id, user_data['username'],
+        user_data['count'], EXPECTED_VOICES_PER_SHIFT, f"{plan_percent:.0f}%",
+        user_data['breaks_count'], user_data['late_returns'],
+        f"{avg_delta:.1f}", f"{max_pause:.1f}", f"{avg_duration:.1f}",
+    ]
+
     try:
-        header = ['user_id', 'username', 'total_shifts', 'total_voices', 'total_breaks', 'total_lates']
-        rows_to_write = [header]
-        for user_id, stats_data in all_stats.items():
-            rows_to_write.append([
-                user_id, stats_data.get('username', 'N/A'),
-                stats_data.get('total_shifts', 0), stats_data.get('total_voices', 0),
-                stats_data.get('total_breaks', 0), stats_data.get('total_lates', 0)
-            ])
-        
-        worksheet.clear()
-        worksheet.update('A1', rows_to_write, value_input_option='USER_ENTERED')
-        logging.info("Статистика успешно выгружена в Google Таблицу.")
+        worksheet.append_row(row_data, value_input_option='USER_ENTERED')
+        logging.info(f"Данные по смене в чате {chat_id} успешно добавлены в Google Таблицу.")
     except Exception as e:
-        logging.error(f"Ошибка при записи данных в Google Таблицу: {e}")
-
-def update_historical_stats(user_id: int, username: str, shift_data: dict):
-    all_stats = load_user_stats()
-    if user_id not in all_stats:
-        all_stats[user_id] = {'username': username, 'total_shifts': 0, 'total_voices': 0, 'total_breaks': 0, 'total_lates': 0}
-
-    all_stats[user_id]['username'] = username
-    all_stats[user_id]['total_shifts'] += 1
-    all_stats[user_id]['total_voices'] += shift_data.get('count', 0)
-    all_stats[user_id]['total_breaks'] += shift_data.get('breaks_count', 0)
-    all_stats[user_id]['total_lates'] += shift_data.get('late_returns', 0)
-    
-    save_user_stats(all_stats)
-
-# ... (остальной код остается без изменений, я привожу его полностью для вашего удобства)
+        logging.error(f"Не удалось добавить данные в Google Таблицу: {e}")
 
 # ========================================
 #           ДЕКОРАТОРЫ И ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
@@ -265,6 +244,7 @@ def handle_start(message):
     bot.send_message(chat_id, f"👑 {username}, вы заступили на смену! Удачи!")
     save_history_event(chat_id, from_user.id, username, "Стал главным на смене")
 
+
 @bot.message_handler(commands=['restart', 'рестарт'])
 @admin_required
 def handle_restart(message):
@@ -308,6 +288,7 @@ def admin_check_shift(message):
     )
     bot.reply_to(message, report_text)
     
+
 @bot.message_handler(commands=['отчет'])
 @admin_required
 def admin_get_final_report(message):
@@ -325,6 +306,7 @@ def admin_get_final_report(message):
     bot.send_message(chat_id, final_report)
     if ADMIN_REPORT_CHAT_ID and chat_id != ADMIN_REPORT_CHAT_ID:
         bot.send_message(ADMIN_REPORT_CHAT_ID, final_report)
+
 
 @bot.message_handler(commands=['выгрузка'])
 @admin_required
@@ -366,8 +348,8 @@ def handle_help(message):
 `/обед` или `/перерыв` — Уйти на перерыв (только для главного).
 `/выгрузка` — Выгрузить историю всех событий смены в виде файла.
 
-`/сводка` — Посмотреть свою личную статистику за все время.
 `/analyze` или `/весьотчет` — (Только для админов) Показать рейтинг всех сотрудников.
+`/testsheet` — (Только для админов) Проверить соединение с Google Sheets.
 `/help` — Показать эту справку.
 
 *Ключевые слова:*
@@ -376,60 +358,39 @@ def handle_help(message):
 """
     bot.reply_to(message, help_text)
 
-@bot.message_handler(commands=['сводка'])
-def my_total_stats(message):
-    user_id = message.from_user.id
-    username = get_username(message.from_user)
-    all_stats = load_user_stats()
-    user_stats = all_stats.get(user_id)
-
-    if not user_stats:
-        bot.reply_to(message, f"{username}, у вас пока нет сохраненной истории смен.")
-        return
-
-    report_text = (
-        f"⭐️ **Общая статистика для {username}** ⭐️\n\n"
-        f"👑 **Всего смен отработано:** {user_stats.get('total_shifts', 0)}\n"
-        f"🗣️ **Всего голосовых записано:** {user_stats.get('total_voices', 0)}\n"
-        f"☕️ **Всего перерывов:** {user_stats.get('total_breaks', 0)}\n"
-        f"⏳ **Всего опозданий с перерыва:** {user_stats.get('total_lates', 0)}"
-    )
-    bot.reply_to(message, report_text)
-    
-@bot.message_handler(commands=['analyze', 'весьотчет'])
+@bot.message_handler(commands=['testsheet'])
 @admin_required
-def admin_analyze_all_users(message):
-    all_stats = load_user_stats()
-    if not all_stats:
-        bot.reply_to(message, "База данных статистики пуста. Пока некого анализировать.")
-        return
-
-    processed_users = []
-    for user_id, stats in all_stats.items():
-        total_shifts = stats.get('total_shifts', 0)
-        if total_shifts == 0: continue
-        avg_voices_per_shift = stats.get('total_voices', 0) / total_shifts
-        lateness_ratio = (stats.get('total_lates', 0) / total_shifts) * 100
-        processed_users.append({
-            'username': stats.get('username', f'ID: {user_id}'),
-            'avg_voices': avg_voices_per_shift,
-            'lateness_percent': lateness_ratio,
-            'shifts': total_shifts
-        })
-
-    processed_users.sort(key=lambda x: x['avg_voices'], reverse=True)
-    report_lines = ["📊 **Общая сводка по всем сотрудникам**", "_(Отсортировано по ср. кол-ву ГС за смену)_\n"]
-    medals = {0: "🥇", 1: "🥈", 2: "🥉"}
-
-    for i, user in enumerate(processed_users):
-        rank_icon = medals.get(i, f"{i+1}.")
-        report_lines.append(
-            f"*{rank_icon}* {user['username']} — *Ср. ГС:* `{user['avg_voices']:.1f}` | *Опоздания:* `{user['lateness_percent']:.0f}%` | *Смен:* `{user['shifts']}`"
+def test_google_sheet(message):
+    """(Только для админов) Тестирует соединение с Google Sheets."""
+    bot.reply_to(message, "⚙️ Запускаю тест соединения с Google Sheets...")
+    
+    worksheet = get_sheet() 
+    
+    if worksheet:
+        try:
+            sheet_title = worksheet.spreadsheet.title
+            bot.send_message(message.chat.id, 
+                f"✅ *УСПЕХ!*\n\n"
+                f"Соединение с Google Sheets установлено.\n"
+                f"Бот успешно получил доступ к таблице: *'{sheet_title}'*.\n\n"
+                f"Выгрузка данных должна работать корректно."
+            )
+        except Exception as e:
+            bot.send_message(message.chat.id, 
+                f"❗️*ОШИБКА НА ЭТАПЕ ЧТЕНИЯ!*\n\n"
+                f"Подключение установлено, но не удалось прочитать данные. "
+                f"Возможно, у сервисного аккаунта недостаточно прав.\n\n"
+                f"Детали: `{e}`"
+            )
+    else:
+        bot.send_message(message.chat.id, 
+            f"❌ *ПРОВАЛ!*\n\n"
+            f"Не удалось подключиться к Google Sheets. Проверьте лог бота в консоли для подробной информации.\n\n"
+            f"**Частые причины:**\n"
+            f"1. Неверный ID таблицы в переменной `GOOGLE_SHEET_KEY`.\n"
+            f"2. Ошибка в данных ключа `GOOGLE_CREDENTIALS_JSON`.\n"
+            f"3. Вы не предоставили доступ сервисному аккаунту (`evgenich-logger@...`) к вашей таблице с правами 'Редактора'."
         )
-
-    if not processed_users:
-         report_lines.append("Нет сотрудников с отработанными сменами.")
-    bot.send_message(message.chat.id, "\n".join(report_lines))
 
 # ========================================
 #           ОБРАБОТЧИКИ СООБЩЕНИЙ
@@ -594,7 +555,6 @@ def generate_analytical_summary(user_data: dict) -> str:
 
 def send_end_of_shift_reports():
     logging.info("Начало отправки итоговых отчетов по сменам в 04:01...")
-    report_sent = False
     active_chats_copy = list(chat_data.keys())
 
     for chat_id in active_chats_copy:
@@ -604,7 +564,7 @@ def send_end_of_shift_reports():
         
         main_user_data = data['users'][data['main_id']]
         if main_user_data.get('count', 0) > 0:
-            update_historical_stats(data['main_id'], main_user_data['username'], main_user_data)
+            append_shift_to_google_sheet(chat_id, data)
             
             report_lines = generate_detailed_report(chat_id, data)
             analytical_summary = generate_analytical_summary(main_user_data)
@@ -616,13 +576,9 @@ def send_end_of_shift_reports():
                     bot.send_message(ADMIN_REPORT_CHAT_ID, final_report)
                 with open(LAST_REPORT_FILE, 'w', encoding='utf-8') as f:
                     f.write(final_report)
-                report_sent = True
             except Exception as e:
                 logging.error(f"Не удалось отправить/сохранить отчет в чате {chat_id}: {e}")
     
-    if not report_sent:
-        logging.info("Не было активных смен для отправки отчета.")
-            
     chat_data.clear()
     user_history.clear()
     logging.info("Данные всех смен очищены.")
@@ -639,7 +595,7 @@ def run_scheduler():
 #           ЗАПУСК БОТА
 # ========================================
 if __name__ == '__main__':
-    logging.info("🤖 Бот (версия 4.2, Google Sheets) запущен...")
+    logging.info("🤖 Бот (версия 5.1, Google Sheets по ID) запущен...")
     threading.Thread(target=run_scheduler, daemon=True).start()
     while True:
         try:
