@@ -17,6 +17,7 @@ from collections import Counter
 # Импорты из наших собственных модулей
 from config import *
 from state import *
+from g_sheets import get_sheet
 from utils import (
     is_admin, admin_required, get_username, get_chat_title,
     init_user_data, init_shift_data, handle_user_return,
@@ -33,7 +34,53 @@ except ImportError:
 
 
 def register_handlers(bot):
-    """Регистрирует все обработчики сообщений и колбэков для бота."""
+    
+    
+    # ===== ОБРАБОТКА КНОПОК АДМИНИСТРАТОРА (панель "Евгенич смотрит") =====
+    @bot.callback_query_handler(func=lambda call: call.data.startswith('admin_'))
+    def handle_admin_callbacks(call: types.CallbackQuery):
+        chat_id = call.message.chat.id
+        user_id = call.from_user.id
+    
+        if not is_admin(bot, user_id, chat_id):
+            return bot.answer_callback_query(call.id, "⛔️ Доступ запрещён!", show_alert=True)
+
+    # ====== DEBUG: ловим ВСЕ callback_query, чтобы понять, что приходит ======
+    @bot.callback_query_handler(func=lambda call: True)
+    def _debug_all_callbacks(call):
+        try:
+            bot.answer_callback_query(call.id, f"DBG: {call.data}", show_alert=True)
+        except Exception:
+            pass  # на всякий случай, чтобы не падало из‑за блокировки всплывашек
+        bot.send_message(call.message.chat.id, f"🧪 DEBUG: получено callback_data → {call.data}")
+
+    
+        bot.answer_callback_query(call.id)
+        action = call.data.split('_', 1)[1]
+    
+        if action == "shift_status":
+            bot.send_message(chat_id, "📊 Статус смены будет здесь.")
+        elif action == "analyze_all":
+            bot.send_message(chat_id, "📈 Общий рейтинг будет тут.")
+        elif action == "manage_ads":
+            bot.send_message(chat_id, "📝 Управление рекламой.")
+        elif action == "find_problems":
+            bot.send_message(chat_id, "🚨 Поиск проблемных зон.")
+        elif action == "chat_setup":
+            bot.send_message(chat_id, "⚙️ Настройка чата.")
+        elif action == "restart_shift":
+            bot.send_message(chat_id, "🔄 Перезапуск смены.")
+        elif action == "force_report":
+            bot.send_message(chat_id, "➡️ Досрочный отчет.")
+        elif action == "export_history":
+            bot.send_message(chat_id, "📜 История выгружена.")
+        elif action == "broadcast":
+            bot.send_message(chat_id, "📢 Рассылка отправлена.")
+        elif action == "main_menu":
+            bot.send_message(chat_id, "🔙 Возврат в главное меню.")
+        else:
+            bot.send_message(chat_id, f"❓ Неизвестная команда: {action}")
+        """Регистрирует все обработчики сообщений и колбэков для бота."""
 
     # ========================================
     #   ВНУТРЕННИЕ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
@@ -659,3 +706,36 @@ def register_handlers(bot):
         except (ValueError, KeyError):
             bot.send_message(message.chat.id, "Неверный формат. Пожалуйста, отправьте сообщение в формате:\n\n`Название шаблона`\n`Текст шаблона...`")
             if user_id in user_states: del user_states[user_id]
+
+    # === ОБРАБОТКА АДМИН-КНОПОК (с юмором от Евгенича) ===
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_"))
+    def handle_admin_callbacks(call: types.CallbackQuery):
+        chat_id = call.message.chat.id
+        user_id = call.from_user.id
+
+        if not is_admin(bot, user_id, chat_id):
+            return bot.answer_callback_query(call.id, "⛔️ Доступ запрещён!", show_alert=True)
+
+        bot.answer_callback_query(call.id)
+        action = call.data.split("_", 1)[1]
+
+        if action == "shift_status":
+            bot.send_message(chat_id, "📊 Евгенич проверил табель — все вроде на месте, но двоих видел у курилки.")
+        elif action == "analyze_all":
+            bot.send_message(chat_id, "📈 Общий рейтинг под контролем. Кто-то молодец, кто-то — так, для мебели.")
+        elif action == "manage_ads":
+            bot.send_message(chat_id, "📝 Рекламу надо крутить, как пластинку 'Комбинации' — ровно и по кайфу.")
+        elif action == "find_problems":
+            bot.send_message(chat_id, "🚨 Сейчас гляну, где завоняло... ага, вот тут косяки.")
+        elif action == "chat_setup":
+            bot.send_message(chat_id, "⚙️ Настройка — дело тонкое. Евгенич одобряет.")
+        elif action == "restart_shift":
+            bot.send_message(chat_id, "🔄 Всё по новой, как в 86-м. Смена перезапущена.")
+        elif action == "force_report":
+            bot.send_message(chat_id, "➡️ Отчёт выгружен досрочно. Не забудь отнести в партком.")
+        elif action == "export_history":
+            bot.send_message(chat_id, "📜 История сохранена. Евгенич всё видит, всё помнит.")
+        elif action == "broadcast":
+            bot.send_message(chat_id, "📢 Объявление отправлено. Теперь даже в подсобке знают.")
+        else:
+            bot.send_message(chat_id, f"❓ Евгенич не понял команду: {action}")
