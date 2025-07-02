@@ -103,13 +103,13 @@ chat_configs: Dict[int, dict] = {}
 # --- Загрузка шаблонов для анализа ---
 AD_TEMPLATES = {}
 try:
-    with open('ad_templates_perm_july.json', 'r', encoding='utf-8') as f:
+    with open('ad_templates.json', 'r', encoding='utf-8') as f:
         AD_TEMPLATES = json.load(f)
     logging.info(f"Успешно загружено {len(AD_TEMPLATES)} рекламных шаблонов.")
 except FileNotFoundError:
-    logging.warning("Файл 'ad_templates_perm_july.json' не найден. Анализ контента будет невозможен.")
+    logging.warning("Файл 'ad_templates.json' не найден. Анализ контента будет невозможен.")
 except json.JSONDecodeError:
-    logging.error("Ошибка в синтаксисе файла 'ad_templates_perm_july.json'.")
+    logging.error("Ошибка в синтаксисе файла 'ad_templates.json'.")
 
 
 # ========================================
