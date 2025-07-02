@@ -1,11 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Финальная версия бота v3.1:
-- Добавлены теги (@username) во все автоматические напоминания.
-- Подробный отчет по смене в 04:01.
-- Автоматический общий рейтинг в 10:00 в админ-чат.
-- Команды /отчет и /весьотчет для админов по запросу.
-- Без меню, управление текстовыми командами.
+Финальная версия бота v4.1:
+- Указано точное имя Google Таблицы для выгрузки.
+- Все предыдущие функции сохранены.
 """
 
 import logging
@@ -18,9 +15,17 @@ import schedule
 import threading
 import random
 import csv
+import json
 from telebot import types
 from functools import wraps
 from typing import Dict, List
+
+# Импорт gspread для работы с Google Таблицами
+try:
+    import gspread
+except ImportError:
+    logging.error("Библиотека gspread не найдена. Установите ее: pip install gspread google-auth-oauthlib")
+    gspread = None
 
 # Импорт фраз
 try:
@@ -47,6 +52,8 @@ BOSS_ID = 196614680
 ADMIN_REPORT_CHAT_ID = -1002645821302 
 STATS_FILE = 'user_stats.csv'
 LAST_REPORT_FILE = 'last_shift_report.txt'
+# <<< ИЗМЕНЕНИЕ: Указано точное имя вашей таблицы >>>
+GOOGLE_SHEET_NAME = "Текст Ведущего: Аналитика" 
 
 # Параметры смены
 VOICE_TIMEOUT_MINUTES = 40
@@ -62,40 +69,73 @@ chat_data: Dict[int, dict] = {}
 user_history: Dict[int, List[str]] = {}
 
 # ========================================
-#      РАБОТА С ФАЙЛОМ СТАТИСТИКИ
+#      РАБОТА С GOOGLE ТАБЛИЦАМИ
 # ========================================
+def get_sheet():
+    """Авторизуется и возвращает рабочий лист Google Таблицы."""
+    if not gspread: return None
+    try:
+        creds_json_str = os.getenv("GOOGLE_CREDENTIALS_JSON")
+        if not creds_json_str:
+            logging.error("Переменная окружения GOOGLE_CREDENTIALS_JSON не найдена!")
+            return None
+        
+        creds_dict = json.loads(creds_json_str)
+        gc = gspread.service_account_from_dict(creds_dict)
+        spreadsheet = gc.open(GOOGLE_SHEET_NAME)
+        worksheet = spreadsheet.sheet1
+        return worksheet
+    except gspread.exceptions.SpreadsheetNotFound:
+        logging.error(f"Таблица с именем '{GOOGLE_SHEET_NAME}' не найдена. Проверьте название и права доступа для сервисного аккаунта.")
+        return None
+    except Exception as e:
+        logging.error(f"Ошибка подключения к Google Sheets: {e}")
+        return None
 
 def load_user_stats() -> Dict[int, Dict]:
     stats = {}
-    if not os.path.exists(STATS_FILE):
-        with open(STATS_FILE, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(['user_id', 'username', 'total_shifts', 'total_voices', 'total_breaks', 'total_lates'])
+    worksheet = get_sheet()
+    if not worksheet:
+        logging.error("Не удалось загрузить лист для чтения статистики.")
         return stats
+    
     try:
-        with open(STATS_FILE, mode='r', newline='', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                stats[int(row['user_id'])] = {
-                    'username': row['username'],
-                    'total_shifts': int(row['total_shifts']),
-                    'total_voices': int(row['total_voices']),
-                    'total_breaks': int(row['total_breaks']),
-                    'total_lates': int(row['total_lates'])
+        records = worksheet.get_all_records()
+        for record in records:
+            if record.get('user_id'):
+                user_id = int(record['user_id'])
+                stats[user_id] = {
+                    'username': record['username'],
+                    'total_shifts': int(record['total_shifts']),
+                    'total_voices': int(record['total_voices']),
+                    'total_breaks': int(record['total_breaks']),
+                    'total_lates': int(record['total_lates'])
                 }
     except Exception as e:
-        logging.error(f"Ошибка при чтении файла статистики: {e}")
+        logging.error(f"Ошибка при чтении данных из Google Таблицы: {e}")
     return stats
 
 def save_user_stats(all_stats: Dict[int, Dict]):
+    worksheet = get_sheet()
+    if not worksheet:
+        logging.error("Не удалось загрузить лист для сохранения статистики.")
+        return
+    
     try:
-        with open(STATS_FILE, mode='w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(['user_id', 'username', 'total_shifts', 'total_voices', 'total_breaks', 'total_lates'])
-            for user_id, stats in all_stats.items():
-                writer.writerow([user_id, stats.get('username', 'N/A'), stats.get('total_shifts', 0), stats.get('total_voices', 0), stats.get('total_breaks', 0), stats.get('total_lates', 0)])
-    except IOError as e:
-        logging.error(f"Ошибка при сохранении файла статистики: {e}")
+        header = ['user_id', 'username', 'total_shifts', 'total_voices', 'total_breaks', 'total_lates']
+        rows_to_write = [header]
+        for user_id, stats_data in all_stats.items():
+            rows_to_write.append([
+                user_id, stats_data.get('username', 'N/A'),
+                stats_data.get('total_shifts', 0), stats_data.get('total_voices', 0),
+                stats_data.get('total_breaks', 0), stats_data.get('total_lates', 0)
+            ])
+        
+        worksheet.clear()
+        worksheet.update('A1', rows_to_write, value_input_option='USER_ENTERED')
+        logging.info("Статистика успешно выгружена в Google Таблицу.")
+    except Exception as e:
+        logging.error(f"Ошибка при записи данных в Google Таблицу: {e}")
 
 def update_historical_stats(user_id: int, username: str, shift_data: dict):
     all_stats = load_user_stats()
@@ -186,30 +226,27 @@ def handle_start(message):
     if chat_id not in chat_data:
         chat_data[chat_id] = {'main_id': None, 'users': {}, 'shift_start': datetime.datetime.now(moscow_tz)}
 
-    # Инициализация пользователя если его нет
     if from_user.id not in chat_data[chat_id]['users']:
         chat_data[chat_id]['users'][from_user.id] = init_user_data(from_user.id, username)
 
-    # Логика передачи смены /start @username
     try:
         target_username = message.text.split()[1]
         if target_username.startswith('@'):
-            target_user_info = next((u for u in chat_data[chat_id]['users'].values() if u['username'].lower() == target_username.lower()), None)
+            all_users_in_chat = chat_data[chat_id].get('users', {})
+            target_user_info = next((u for u in all_users_in_chat.values() if u['username'].lower() == target_username.lower()), None)
+            
             if not target_user_info:
                 bot.reply_to(message, f"Пользователь {target_username} не найден. Он должен сначала что-нибудь написать в этом чате.")
                 return
             
-            target_user_id = next(uid for uid, u in chat_data[chat_id]['users'].items() if u['username'].lower() == target_username.lower())
+            target_user_id = next(uid for uid, u in all_users_in_chat.items() if u['username'].lower() == target_username.lower())
             
-            # Назначаем нового главного
             chat_data[chat_id]['main_id'] = target_user_id
             chat_data[chat_id]['main_username'] = target_user_info['username']
             bot.send_message(chat_id, f"👑 По команде от {username}, новым главным на смене назначен {target_user_info['username']}!")
             save_history_event(chat_id, from_user.id, username, f"Передал смену {target_user_info['username']}")
             return
-
     except IndexError:
-        # Если /start без параметров
         pass
 
     if chat_data[chat_id].get('main_id') is not None:
@@ -229,10 +266,11 @@ def handle_restart(message):
     if chat_id in chat_data and chat_data[chat_id].get('main_id') is not None:
         chat_data[chat_id]['main_id'] = None
         chat_data[chat_id]['main_username'] = None
-        bot.reply_to(message, "🔄 Смена перезапущена. Текущий главный сброшен. Теперь любой может стать главным, отправив ГС.")
+        bot.reply_to(message, "🔄 Смена перезапущена. Текущий главный сброшен.")
         save_history_event(chat_id, message.from_user.id, get_username(message.from_user), "Перезапустил смену")
     else:
         bot.reply_to(message, "Активной смены в этом чате и так не было.")
+
 
 @bot.message_handler(commands=['check', 'промежуточный', 'статистика'])
 @admin_required
@@ -248,8 +286,7 @@ def admin_check_shift(message):
         bot.reply_to(message, f"В чате `{get_chat_title(chat_id)}` смена еще не началась.")
         return
 
-    main_id = data.get('main_id')
-    user = data.get('users', {}).get(main_id)
+    user = data.get('users', {}).get(data['main_id'])
     if not user:
         bot.reply_to(message, "Не найдены данные по текущему ведущему.")
         return
@@ -296,9 +333,7 @@ def admin_export_history(message):
     try:
         filename = f"history_{chat_id}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         with open(filename, 'w', encoding='utf-8') as f:
-            f.write(f"История событий для чата: {get_chat_title(chat_id)}\n")
-            f.write("="*40 + "\n")
-            f.write("\n".join(history))
+            f.write(f"История событий для чата: {get_chat_title(chat_id)}\n" + "="*40 + "\n" + "\n".join(history))
         
         with open(filename, 'rb') as f:
             bot.send_document(message.chat.id, f, caption="Лог событий текущей смены.")
@@ -307,6 +342,7 @@ def admin_export_history(message):
     except Exception as e:
         logging.error(f"Ошибка при выгрузке истории: {e}")
         bot.reply_to(message, "Произошла ошибка при создании файла истории.")
+
 
 @bot.message_handler(commands=['help'])
 def handle_help(message):
@@ -333,6 +369,26 @@ def handle_help(message):
 - Для возврата с перерыва: `на месте`, `вернулся`, `пришел`, `тут` и т.д.
 """
     bot.reply_to(message, help_text)
+
+@bot.message_handler(commands=['сводка'])
+def my_total_stats(message):
+    user_id = message.from_user.id
+    username = get_username(message.from_user)
+    all_stats = load_user_stats()
+    user_stats = all_stats.get(user_id)
+
+    if not user_stats:
+        bot.reply_to(message, f"{username}, у вас пока нет сохраненной истории смен.")
+        return
+
+    report_text = (
+        f"⭐️ **Общая статистика для {username}** ⭐️\n\n"
+        f"👑 **Всего смен отработано:** {user_stats.get('total_shifts', 0)}\n"
+        f"🗣️ **Всего голосовых записано:** {user_stats.get('total_voices', 0)}\n"
+        f"☕️ **Всего перерывов:** {user_stats.get('total_breaks', 0)}\n"
+        f"⏳ **Всего опозданий с перерыва:** {user_stats.get('total_lates', 0)}"
+    )
+    bot.reply_to(message, report_text)
     
 @bot.message_handler(commands=['analyze', 'весьотчет'])
 @admin_required
@@ -368,26 +424,6 @@ def admin_analyze_all_users(message):
     if not processed_users:
          report_lines.append("Нет сотрудников с отработанными сменами.")
     bot.send_message(message.chat.id, "\n".join(report_lines))
-
-@bot.message_handler(commands=['сводка'])
-def my_total_stats(message):
-    user_id = message.from_user.id
-    username = get_username(message.from_user)
-    all_stats = load_user_stats()
-    user_stats = all_stats.get(user_id)
-
-    if not user_stats:
-        bot.reply_to(message, f"{username}, у вас пока нет сохраненной истории смен.")
-        return
-
-    report_text = (
-        f"⭐️ **Общая статистика для {username}** ⭐️\n\n"
-        f"👑 **Всего смен отработано:** {user_stats.get('total_shifts', 0)}\n"
-        f"🗣️ **Всего голосовых записано:** {user_stats.get('total_voices', 0)}\n"
-        f"☕️ **Всего перерывов:** {user_stats.get('total_breaks', 0)}\n"
-        f"⏳ **Всего опозданий с перерыва:** {user_stats.get('total_lates', 0)}"
-    )
-    bot.reply_to(message, report_text)
 
 # ========================================
 #           ОБРАБОТЧИКИ СООБЩЕНИЙ
@@ -533,14 +569,14 @@ def generate_detailed_report(chat_id: int, data: dict) -> list:
 def generate_analytical_summary(user_data: dict) -> str:
     summary = ["\n---", "🧠 **Анализ смены:**"]
     
-    if user_data.get('voice_deltas'):
+    if user_data.get('voice_deltas') and len(user_data['voice_deltas']) > 0:
         if max(user_data['voice_deltas']) > VOICE_TIMEOUT_MINUTES * 1.5:
             summary.append("•  зона роста: были длинные паузы в эфире.")
         else:
             summary.append("• сильная сторона: хороший, стабильный ритм.")
 
     if user_data.get('response_times'):
-        if sum(user_data['response_times']) / len(user_data['response_times']) < 3:
+        if (sum(user_data['response_times']) / len(user_data['response_times'])) < 3:
             summary.append("• сильная сторона: отличная реакция на напоминания.")
         else:
             summary.append("• зона роста: стоит быстрее реагировать на уведомления.")
@@ -553,26 +589,32 @@ def generate_analytical_summary(user_data: dict) -> str:
 def send_end_of_shift_reports():
     logging.info("Начало отправки итоговых отчетов по сменам в 04:01...")
     active_chats = list(chat_data.keys())
+    report_sent = False
     for chat_id in active_chats:
         data = chat_data.get(chat_id)
         if not data or not data.get('main_id') or data['main_id'] not in data.get('users', {}):
             continue
         
         main_user_data = data['users'][data['main_id']]
-        update_historical_stats(data['main_id'], main_user_data['username'], main_user_data)
-        
-        report_lines = generate_detailed_report(chat_id, data)
-        analytical_summary = generate_analytical_summary(main_user_data)
-        final_report = "\n".join(report_lines) + "\n" + analytical_summary
-        
-        try:
-            bot.send_message(chat_id, final_report)
-            if ADMIN_REPORT_CHAT_ID and chat_id != ADMIN_REPORT_CHAT_ID:
-                bot.send_message(ADMIN_REPORT_CHAT_ID, final_report)
-            with open(LAST_REPORT_FILE, 'w', encoding='utf-8') as f:
-                f.write(final_report)
-        except Exception as e:
-            logging.error(f"Не удалось отправить/сохранить отчет в чате {chat_id}: {e}")
+        if main_user_data.get('count', 0) > 0:
+            update_historical_stats(data['main_id'], main_user_data['username'], main_user_data)
+            
+            report_lines = generate_detailed_report(chat_id, data)
+            analytical_summary = generate_analytical_summary(main_user_data)
+            final_report = "\n".join(report_lines) + "\n" + analytical_summary
+            
+            try:
+                bot.send_message(chat_id, final_report)
+                if ADMIN_REPORT_CHAT_ID and chat_id != ADMIN_REPORT_CHAT_ID:
+                    bot.send_message(ADMIN_REPORT_CHAT_ID, final_report)
+                with open(LAST_REPORT_FILE, 'w', encoding='utf-8') as f:
+                    f.write(final_report)
+                report_sent = True
+            except Exception as e:
+                logging.error(f"Не удалось отправить/сохранить отчет в чате {chat_id}: {e}")
+    
+    if not report_sent:
+        logging.info("Не было активных смен для отправки отчета.")
             
     chat_data.clear()
     user_history.clear()
@@ -590,7 +632,7 @@ def run_scheduler():
 #           ЗАПУСК БОТА
 # ========================================
 if __name__ == '__main__':
-    logging.info("🤖 Бот (версия 3.1, без меню) запущен...")
+    logging.info("🤖 Бот (версия 4.1, командный интерфейс) запущен...")
     threading.Thread(target=run_scheduler, daemon=True).start()
     while True:
         try:
