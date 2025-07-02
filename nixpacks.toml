@@ -1,0 +1,4 @@
+# Файл: nixpacks.toml
+
+[phases.setup]
+nixPkgs = ["pkgs.libffi", "pkgs.pkg-config"]
