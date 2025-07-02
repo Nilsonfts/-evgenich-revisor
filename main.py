@@ -286,10 +286,9 @@ def save_history_event(chat_id, user_id, username, event_description):
 # ========================================
 #   АНАЛИЗ РЕЧИ ЧЕРЕЗ OPENAI
 # ========================================
-def analyze_voice_content(audio_path: str, chat_id: int) -> str:
-    if not client:
-        logging.warning("Клиент OpenAI не инициализирован. Пропуск анализа.")
-        return None
+def analyze_voice_content(audio_path: str, chat_id: int) -> List[str]: # ИЗМЕНЕНИЕ: Теперь возвращает список строк
+    if not client or not AD_TEMPLATES:
+        return [] # Возвращаем пустой список
     
     chat_config = chat_configs.get(chat_id, {})
     brand = chat_config.get("brand")
@@ -297,12 +296,12 @@ def analyze_voice_content(audio_path: str, chat_id: int) -> str:
     
     if not brand or not city:
         logging.warning(f"Для чата {chat_id} не определен бренд/город. Пропуск анализа.")
-        return None
+        return []
         
     templates_for_location = AD_TEMPLATES.get(brand, {}).get(city)
     if not templates_for_location:
         logging.warning(f"В ad_templates.json не найдены шаблоны для '{brand}' в городе '{city}'.")
-        return None
+        return []
 
     try:
         with open(audio_path, "rb") as audio_file:
@@ -310,11 +309,17 @@ def analyze_voice_content(audio_path: str, chat_id: int) -> str:
         recognized_text = transcript.text
         logging.info(f"Распознанный текст: '{recognized_text}'")
 
-        if not recognized_text.strip(): return None
+        if not recognized_text.strip(): return []
 
-        system_prompt = "Ты — ассистент, который определяет, какой из рекламных текстов произнес диктор. В ответ дай только название рекламы из списка или слово 'None', если совпадений нет."
+        # ИЗМЕНЕНИЕ: Новая, более гибкая инструкция для GPT
+        system_prompt = (
+            "Ты — ассистент, который находит в тексте диктора упоминания рекламных шаблонов из предоставленного списка. "
+            "В ответ верни названия ВСЕХ подходящих шаблонов, каждое с новой строки. "
+            "Если совпадений нет, верни одно слово 'None'."
+        )
+        
         ad_list_for_prompt = "\n".join([f"- {name}: '{text}'" for name, text in templates_for_location.items()])
-        user_prompt = f"Вот текст от диктора: '{recognized_text}'.\n\nВот список рекламных шаблонов:\n{ad_list_for_prompt}\n\nКакая реклама была произнесена? Ответь только названием или 'None'."
+        user_prompt = f"Вот текст от диктора: '{recognized_text}'.\n\nВот список рекламных шаблонов:\n{ad_list_for_prompt}\n\nКакие шаблоны были упомянуты? Перечисли все подходящие, каждый с новой строки, или напиши 'None'."
 
         completion = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -322,42 +327,49 @@ def analyze_voice_content(audio_path: str, chat_id: int) -> str:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=0.1
+            temperature=0
         )
-        analysis_result = completion.choices[0].message.content.strip()
+        analysis_result_text = completion.choices[0].message.content.strip()
 
-        if analysis_result in templates_for_location:
-            logging.info(f"GPT определил совпадение: {analysis_result}")
-            return analysis_result
+        if analysis_result_text == 'None':
+            logging.info("GPT не нашел совпадений с шаблонами.")
+            return []
+
+        # ИЗМЕНЕНИЕ: Обрабатываем многострочный ответ и возвращаем список
+        found_templates = []
+        for line in analysis_result_text.splitlines():
+            template_name = line.strip()
+            if template_name in templates_for_location:
+                found_templates.append(template_name)
+        
+        if found_templates:
+            logging.info(f"GPT определил совпадения: {found_templates}")
+            return found_templates
         else:
-            logging.info("GPT не нашел точного совпадения с шаблонами.")
-            return None
+            logging.info("Ответ GPT не содержит валидных названий шаблонов.")
+            return []
             
     except Exception as e:
-        error_message = (
-            f"❗️ **Ошибка анализа речи OpenAI** ❗️\n\n"
-            f"Произошла ошибка:\n`{e}`\n\n"
-            f"*Возможные причины:*\n"
-            f"- Неверный или неактивный `OPENAI_API_KEY`.\n"
-            f"- Закончились средства на балансе OpenAI."
-        )
+        error_message = f"❗️ **Ошибка анализа речи OpenAI** ❗️\n\nПроизошла ошибка:\n`{e}`"
         logging.error(f"Ошибка при обработке аудио через OpenAI: {e}")
         try:
             if BOSS_ID:
                 bot.send_message(BOSS_ID, error_message, parse_mode="Markdown")
         except Exception as send_e:
             logging.error(f"Не удалось отправить личное сообщение об ошибке: {send_e}")
-        return None
+        return []
+  except Exception as e:
 
 def process_audio_and_save_result(file_path, user_data, chat_id):
     try:
-        ad_name = analyze_voice_content(file_path, chat_id)
-        if ad_name:
-            user_data['recognized_ads'].append(ad_name)
+        # analyze_voice_content теперь возвращает список
+        ad_names = analyze_voice_content(file_path, chat_id)
+        if ad_names:
+            # ИЗМЕНЕНИЕ: Расширяем список, а не добавляем один элемент
+            user_data['recognized_ads'].extend(ad_names)
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)
-
 
 # ========================================
 #   ОСНОВНЫЕ КОМАНДЫ БОТА
