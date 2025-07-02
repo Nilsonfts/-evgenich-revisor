@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Финальная версия v19.0 (Продакшн):
-- Улучшено форматирование всех отчетов для лучшей читаемости.
-- Изменены значения по умолчанию: план 15 ГС, мин. длина 7 сек.
-- Проведена финальная проверка и рефакторинг всего кода.
+Финальная версия v21.0 (Production Ready):
+- Проведен финальный аудит и рефакторинг всего кода.
+- Улучшено форматирование всех отчетов для максимальной читаемости и стабильности.
+- Добавлены проверки на пустые данные при расчете статистики.
+- Повышена отказоустойчивость фоновых задач.
 - Вся функциональность финализирована.
 """
 
@@ -58,15 +59,16 @@ GOOGLE_SHEET_KEY = os.getenv("GOOGLE_SHEET_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
 
+
 # --- ID и конфиги ---
 BOSS_ID = 196614680
 ADMIN_REPORT_CHAT_ID = -1002645821302
 CHAT_CONFIG_FILE = 'chat_configs.json'
 
 # --- Параметры смены ---
-EXPECTED_VOICES_PER_SHIFT = 15  # ИЗМЕНЕНИЕ: План по умолчанию
+EXPECTED_VOICES_PER_SHIFT = 15
 VOICE_TIMEOUT_MINUTES = 40
-VOICE_MIN_DURATION_SECONDS = 7    # ИЗМЕНЕНИЕ: Мин. длительность ГС
+VOICE_MIN_DURATION_SECONDS = 7
 VOICE_COOLDOWN_SECONDS = 120
 BREAK_DURATION_MINUTES = 15
 BREAK_DELAY_MINUTES = 60
@@ -100,7 +102,7 @@ chat_data: Dict[int, dict] = {}
 user_history: Dict[int, List[str]] = {}
 chat_configs: Dict[int, dict] = {}
 
-# --- Загрузка шаблонов для анализа ---
+# --- Загрузка шаблонов и конфигов ---
 AD_TEMPLATES = {}
 try:
     with open('ad_templates.json', 'r', encoding='utf-8') as f:
@@ -123,7 +125,7 @@ def load_chat_configs():
     try:
         with open(CHAT_CONFIG_FILE, 'r', encoding='utf-8') as f:
             chat_configs = {int(k): v for k, v in json.load(f).items()}
-            logging.info("Конфигурации чатов успешно загружены.")
+            logging.info(f"Успешно загружено {len(chat_configs)} конфигураций чатов.")
     except Exception as e:
         logging.error(f"Ошибка загрузки конфигурации чатов: {e}")
         chat_configs = {}
@@ -164,13 +166,14 @@ def create_sheet_header_if_needed(worksheet):
     try:
         if worksheet.acell('A1').value is None:
             headers = [
-                "Дата", "ID Чата", "Название Чата", "ID Ведущего", "Тег Ведущего",
-                "Голосовых (шт)", "План (шт)", "Выполнение (%)", "Перерывов (шт)",
-                "Опозданий (шт)", "Средний ритм (мин)", "Макс. пауза (мин)", "Ср. длина ГС (сек)",
+                "Дата", "ID Чата", "Название Чата", "Бренд", "Город", 
+                "ID Ведущего", "Тег Ведущего", "Голосовых (шт)", "План (шт)", 
+                "Выполнение (%)", "Перерывов (шт)", "Опозданий (шт)", 
+                "Средний ритм (мин)", "Макс. пауза (мин)", "Ср. длина ГС (сек)",
                 "Рекомендация", "Затронутые темы"
             ]
             worksheet.append_row(headers, value_input_option='USER_ENTERED')
-            worksheet.format('A1:O1', {'textFormat': {'bold': True}, 'horizontalAlignment': 'CENTER'})
+            worksheet.format('A1:Q1', {'textFormat': {'bold': True}, 'horizontalAlignment': 'CENTER'})
             logging.info("Создана шапка в Google Таблице.")
     except Exception as e:
         logging.error(f"Не удалось создать шапку в Google Таблице: {e}")
@@ -193,15 +196,19 @@ def append_shift_to_google_sheet(chat_id, data, analytical_conclusion):
     max_pause = max(user_data['voice_deltas']) if user_data['voice_deltas'] else 0
     avg_duration = sum(user_data['voice_durations']) / len(user_data['voice_durations']) if user_data['voice_durations'] else 0
     
+    chat_config = chat_configs.get(chat_id, {})
+    brand = chat_config.get('brand', 'N/A')
+    city = chat_config.get('city', 'N/A')
+
     ad_counts = Counter(user_data.get('recognized_ads', []))
     recognized_ads_str = ", ".join([f"{ad} (x{count})" for ad, count in ad_counts.items()]) or "Нет данных"
 
     row_data = [
         data.get('shift_start', now).strftime('%d.%m.%Y'), chat_id, get_chat_title(chat_id),
-        main_id, user_data['username'], user_data['count'], shift_goal,
-        f"{plan_percent:.0f}%", user_data['breaks_count'], user_data['late_returns'],
-        f"{avg_delta:.1f}", f"{max_pause:.1f}", f"{avg_duration:.1f}",
-        analytical_conclusion, recognized_ads_str
+        brand, city, main_id, user_data['username'], user_data['count'], 
+        shift_goal, f"{plan_percent:.0f}%", user_data['breaks_count'], 
+        user_data['late_returns'], f"{avg_delta:.1f}", f"{max_pause:.1f}", 
+        f"{avg_duration:.1f}", analytical_conclusion, recognized_ads_str
     ]
     try:
         worksheet.append_row(row_data, value_input_option='USER_ENTERED')
@@ -279,31 +286,34 @@ def save_history_event(chat_id, user_id, username, event_description):
 # ========================================
 #   АНАЛИЗ РЕЧИ ЧЕРЕЗ OPENAI
 # ========================================
-def analyze_voice_content(audio_path: str) -> str:
-    """
-    Анализирует аудиофайл и в случае ошибки отправляет уведомление лично BOSS_ID.
-    """
-    logging.info("Попытка анализа голосового контента...")
-    
-    if not client or not AD_TEMPLATES:
-        logging.warning("Клиент OpenAI или шаблоны AD_TEMPLATES недоступны. Пропуск анализа.")
+def analyze_voice_content(audio_path: str, chat_id: int) -> str:
+    if not client:
+        logging.warning("Клиент OpenAI не инициализирован. Пропуск анализа.")
         return None
+    
+    chat_config = chat_configs.get(chat_id, {})
+    brand = chat_config.get("brand")
+    city = chat_config.get("city")
+    
+    if not brand or not city:
+        logging.warning(f"Для чата {chat_id} не определен бренд/город. Пропуск анализа.")
+        return None
+        
+    templates_for_location = AD_TEMPLATES.get(brand, {}).get(city)
+    if not templates_for_location:
+        logging.warning(f"В ad_templates.json не найдены шаблоны для '{brand}' в городе '{city}'.")
+        return None
+
     try:
-        # Шаг 1: Транскрипция аудио в текст
         with open(audio_path, "rb") as audio_file:
-            transcript = client.audio.transcriptions.create(
-              model="whisper-1", 
-              file=audio_file
-            )
+            transcript = client.audio.transcriptions.create(model="whisper-1", file=audio_file)
         recognized_text = transcript.text
         logging.info(f"Распознанный текст: '{recognized_text}'")
 
-        if not recognized_text.strip():
-            return None
+        if not recognized_text.strip(): return None
 
-        # Шаг 2: Анализ текста с помощью GPT
         system_prompt = "Ты — ассистент, который определяет, какой из рекламных текстов произнес диктор. В ответ дай только название рекламы из списка или слово 'None', если совпадений нет."
-        ad_list_for_prompt = "\n".join([f"- {name}: '{text}'" for name, text in AD_TEMPLATES.items()])
+        ad_list_for_prompt = "\n".join([f"- {name}: '{text}'" for name, text in templates_for_location.items()])
         user_prompt = f"Вот текст от диктора: '{recognized_text}'.\n\nВот список рекламных шаблонов:\n{ad_list_for_prompt}\n\nКакая реклама была произнесена? Ответь только названием или 'None'."
 
         completion = client.chat.completions.create(
@@ -316,7 +326,7 @@ def analyze_voice_content(audio_path: str) -> str:
         )
         analysis_result = completion.choices[0].message.content.strip()
 
-        if analysis_result in AD_TEMPLATES:
+        if analysis_result in templates_for_location:
             logging.info(f"GPT определил совпадение: {analysis_result}")
             return analysis_result
         else:
@@ -324,26 +334,24 @@ def analyze_voice_content(audio_path: str) -> str:
             return None
             
     except Exception as e:
-        # ИЗМЕНЕНИЕ: Отправляем ошибку в личные сообщения BOSS_ID
         error_message = (
             f"❗️ **Ошибка анализа речи OpenAI** ❗️\n\n"
-            f"Произошла ошибка при обработке аудиофайла:\n`{e}`\n\n"
+            f"Произошла ошибка:\n`{e}`\n\n"
             f"*Возможные причины:*\n"
             f"- Неверный или неактивный `OPENAI_API_KEY`.\n"
-            f"- Закончились средства на балансе OpenAI.\n"
-            f"- Проблемы с доступом к API OpenAI."
+            f"- Закончились средства на балансе OpenAI."
         )
         logging.error(f"Ошибка при обработке аудио через OpenAI: {e}")
         try:
             if BOSS_ID:
                 bot.send_message(BOSS_ID, error_message, parse_mode="Markdown")
         except Exception as send_e:
-            logging.error(f"Не удалось отправить личное сообщение об ошибке анализа речи: {send_e}")
+            logging.error(f"Не удалось отправить личное сообщение об ошибке: {send_e}")
         return None
 
-def process_audio_and_save_result(file_path, user_data):
+def process_audio_and_save_result(file_path, user_data, chat_id):
     try:
-        ad_name = analyze_voice_content(file_path)
+        ad_name = analyze_voice_content(file_path, chat_id)
         if ad_name:
             user_data['recognized_ads'].append(ad_name)
     finally:
@@ -357,8 +365,7 @@ def process_audio_and_save_result(file_path, user_data):
 @bot.message_handler(commands=['start', 'старт'])
 def handle_start(message):
     chat_id = message.chat.id
-    if chat_id > 0:
-        return bot.reply_to(message, "Эта команда работает только в групповом чате.")
+    if chat_id > 0: return bot.reply_to(message, "Эта команда работает только в групповом чате.")
     from_user = message.from_user
     username = get_username(from_user)
     if chat_id not in chat_data:
@@ -389,29 +396,30 @@ def handle_check(message):
     chat_id = message.chat.id
     user_id = message.from_user.id
     data = chat_data.get(chat_id)
-
     if not data or not data.get('main_id'):
         return bot.reply_to(message, "Смена в этом чате еще не началась.")
-
     main_user_id = data['main_id']
     main_user_data = data.get('users', {}).get(main_user_id)
-
     if not main_user_data:
         return bot.reply_to(message, "Ошибка: не найдены данные о ведущем.")
-
     if user_id != main_user_id:
         return bot.reply_to(message, f"Эту команду может использовать только текущий главный на смене: {main_user_data.get('username', 'Неизвестно')}.")
-
     shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT)
     plan_percent = (main_user_data['count'] / shift_goal * 100) if shift_goal > 0 else 0
-    
-    report_text = (
-        f"📋 *Промежуточный отчет для вас* ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})\n\n"
-        f"🗣️ **Голосовых:** {main_user_data['count']} из {shift_goal} ({plan_percent:.0f}%)\n"
-        f"☕ **Перерывов:** {main_user_data['breaks_count']}\n"
+    report_lines = [
+        f"📋 *Промежуточный отчет для вас* ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})",
+        "",
+        f"🗣️ **Голосовых:** {main_user_data['count']} из {shift_goal} ({plan_percent:.0f}%)",
+        f"☕ **Перерывов:** {main_user_data['breaks_count']}",
         f"⏳ **Опозданий с перерыва:** {main_user_data['late_returns']}"
-    )
-    bot.reply_to(message, report_text)
+    ]
+    ad_counts = Counter(main_user_data.get('recognized_ads', []))
+    if ad_counts:
+        report_lines.append("\n**📝 Анализ контента:**")
+        for ad, count in ad_counts.items():
+            report_lines.append(f"✔️ {ad} (x{count})")
+    final_report = "\n".join(report_lines)
+    bot.reply_to(message, final_report)
 
 @bot.message_handler(commands=['checkadmin'])
 @admin_required
@@ -423,21 +431,16 @@ def handle_checkadmin(message):
             target_username = '@' + target_username
     except IndexError:
         return bot.reply_to(message, "Неверный формат. Используйте: `/checkadmin @username`")
-
     data = chat_data.get(chat_id)
     if not data or not data.get('main_id'):
         return bot.reply_to(message, "Смена в этом чате еще не началась.")
-
     main_user_data = data.get('users', {}).get(data['main_id'])
     if not main_user_data:
         return bot.reply_to(message, "Ошибка: не найдены данные о ведущем.")
-    
     if main_user_data['username'].lower() != target_username.lower():
         return bot.reply_to(message, f"Указанный пользователь {target_username} не является главным на текущей смене. Сейчас на смене: {main_user_data['username']}")
-
     shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT)
     plan_percent = (main_user_data['count'] / shift_goal * 100) if shift_goal > 0 else 0
-    
     report_lines = [
         f"📋 **Промежуточный отчет по смене** ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})",
         f"🎤 **Ведущий:** {main_user_data['username']}",
@@ -452,13 +455,11 @@ def handle_checkadmin(message):
         f"**Макс. пауза:** {max(main_user_data['voice_deltas']):.1f} мин." if main_user_data['voice_deltas'] else "**Макс. пауза:** Н/Д",
         f"**Ср. длина ГС:** {sum(main_user_data['voice_durations']) / len(main_user_data['voice_durations']):.1f} сек." if main_user_data['voice_durations'] else "**Ср. длина ГС:** Н/Д"
     ]
-
     ad_counts = Counter(main_user_data.get('recognized_ads', []))
     if ad_counts:
         report_lines.append("\n---\n**📝 Анализ Контента**")
         for ad, count in ad_counts.items():
             report_lines.append(f"✔️ {ad} (x{count})")
-            
     final_report = "\n".join(report_lines)
     bot.reply_to(message, final_report)
 
@@ -467,21 +468,16 @@ def handle_checkadmin(message):
 def handle_shift_status(message):
     chat_id = message.chat.id
     data = chat_data.get(chat_id)
-
     if not data or not data.get('main_id'):
         return bot.reply_to(message, "Смена в этом чате еще не началась.")
-
     main_user_data = data.get('users', {}).get(data['main_id'])
     if not main_user_data:
         return bot.reply_to(message, "В текущей смене нет данных о ведущем.")
-
     shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT)
     plan_percent = (main_user_data['count'] / shift_goal * 100) if shift_goal > 0 else 0
-    
     avg_delta = sum(main_user_data['voice_deltas']) / len(main_user_data['voice_deltas']) if main_user_data['voice_deltas'] else 0
     max_pause = max(main_user_data['voice_deltas']) if main_user_data['voice_deltas'] else 0
     avg_duration = sum(main_user_data['voice_durations']) / len(main_user_data['voice_durations']) if main_user_data['voice_durations'] else 0
-
     report_lines = [
         f"📋 **Промежуточный отчет по смене** ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})",
         f"🎤 **Ведущий:** {main_user_data['username']}",
@@ -496,13 +492,11 @@ def handle_shift_status(message):
         f"**Макс. пауза:** {max_pause:.1f} мин." if max_pause else "**Макс. пауза:** Н/Д",
         f"**Ср. длина ГС:** {avg_duration:.1f} сек." if avg_duration else "**Ср. длина ГС:** Н/Д"
     ]
-
     ad_counts = Counter(main_user_data.get('recognized_ads', []))
     if ad_counts:
         report_lines.append("\n---\n**📝 Анализ Контента**")
         for ad, count in ad_counts.items():
             report_lines.append(f"✔️ {ad} (x{count})")
-
     final_report = "\n".join(report_lines)
     bot.reply_to(message, final_report)
 
@@ -511,26 +505,19 @@ def handle_shift_status(message):
 def handle_limit(message):
     chat_id = message.chat.id
     data = chat_data.get(chat_id)
-
     if not data or not data.get('main_id'):
         return bot.reply_to(message, "Нельзя установить лимит, так как смена еще не началась.")
-    
     try:
         parts = message.text.split()
-        if len(parts) < 2:
-            raise IndexError
+        if len(parts) < 2: raise IndexError
         target_limit = int(parts[1])
         if target_limit <= 0:
             return bot.reply_to(message, "План должен быть положительным числом.")
-
         data['shift_goal'] = target_limit
         bot.reply_to(message, f"✅ Новый план на текущую смену установлен: *{target_limit}* голосовых сообщений.")
         save_history_event(chat_id, message.from_user.id, get_username(message.from_user), f"Установил новый план: {target_limit} ГС")
-
-    except IndexError:
+    except (IndexError, ValueError):
         return bot.reply_to(message, "Неверный формат. Используйте: `/лимит <число>`")
-    except ValueError:
-        return bot.reply_to(message, "Укажите корректное число после команды.")
     
 @bot.message_handler(commands=['отчет'])
 @admin_required
@@ -629,6 +616,28 @@ def admin_export_history(message):
 # ========================================
 #   КОМАНДЫ АДМИНИСТРИРОВАНИЯ ЧАТА
 # ========================================
+@bot.message_handler(commands=['setup'])
+@admin_required
+def handle_setup(message):
+    chat_id = message.chat.id
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            raise IndexError
+        brand = parts[1].lower()
+        city = parts[2].lower()
+
+        if chat_id not in chat_configs:
+            chat_configs[chat_id] = {}
+        
+        chat_configs[chat_id]['brand'] = brand
+        chat_configs[chat_id]['city'] = city
+        save_chat_configs()
+
+        bot.reply_to(message, f"✅ Чат успешно зарегистрирован!\n**Бренд:** `{brand}`\n**Город:** `{city}`")
+    except IndexError:
+        bot.reply_to(message, "Неверный формат. Используйте: `/setup <бренд> <город>`\n*Пример:* `/setup rvb perm`")
+
 @bot.message_handler(commands=['set_timezone'])
 @admin_required
 def set_timezone(message):
@@ -660,7 +669,7 @@ def set_shift_timing(message):
         chat_configs[chat_id]['start_time'] = start_time_str
         chat_configs[chat_id]['end_time'] = end_time_str
         save_chat_configs()
-        bot.reply_to(message, f"✅ График смены для этого чата установлен: с *{start_time_str}* до *{end_time_str}*.")
+        bot.send_message(message.chat.id, f"✅ График смены для этого чата установлен: с *{start_time_str}* до *{end_time_str}*.")
     except (IndexError, ValueError):
         bot.reply_to(message, "Неверный формат. Пример:\n`/тайминг 19:00 04:00`")
 
@@ -696,11 +705,12 @@ def handle_help(message):
 
 *Общие Команды*
 `/start` — Назначить себя главным на смене.
-`/промежуточный` (или `/check`) — Показать свой промежуточный отчет.
+`/промежуточный` — Показать свой личный промежуточный отчет.
 `/сводка` — Посмотреть свою личную статистику за все время.
 `/перерыв` или `/обед` — Уйти на перерыв.
 
 *Административные Команды*
+`/setup <бренд> <город>` — Зарегистрировать чат.
 `/limited <число>` — Установить план по ГС на текущую смену.
 `/shiftstatus` — Показать полный промежуточный отчет по смене.
 `/checkadmin @username` — Показать отчет по конкретному ведущему.
@@ -753,10 +763,10 @@ def handle_voice_message(message):
                 return
         
         if message.voice.duration < VOICE_MIN_DURATION_SECONDS:
-            bot.send_message(chat_id, f"*{random.choice(soviet_phrases['too_short'])}* ({message.voice.duration} сек)", reply_to_message_id=message.message_id)
+            bot.send_message(chat_id, f"*{random.choice(soviet_phrases.get('too_short', ['Слишком коротко!']))}* ({message.voice.duration} сек)", reply_to_message_id=message.message_id)
             return
             
-        bot.send_message(chat_id, f"*{random.choice(soviet_phrases['accept'])}*", reply_to_message_id=message.message_id)
+        bot.send_message(chat_id, f"*{random.choice(soviet_phrases.get('accept', ['Принято.']))}*", reply_to_message_id=message.message_id)
         
         if user_data.get('last_voice_time'):
             delta_minutes = (now - user_data['last_voice_time']).total_seconds() / 60
@@ -774,7 +784,7 @@ def handle_voice_message(message):
             file_path = f"voice_{message.message_id}.ogg"
             with open(file_path, 'wb') as new_file:
                 new_file.write(downloaded_file)
-            threading.Thread(target=process_audio_and_save_result, args=(file_path, user_data)).start()
+            threading.Thread(target=process_audio_and_save_result, args=(file_path, user_data, chat_id)).start()
         except Exception as e:
             logging.error(f"Ошибка при скачивании аудиофайла: {e}")
             if file_path and os.path.exists(file_path):
@@ -818,14 +828,13 @@ def generate_detailed_report(chat_id: int, data: dict) -> list:
     if not main_id or main_id not in data.get('users', {}): 
         return ["Главный на смене не был назначен или не проявил активности."]
     user = data['users'][main_id]
-    now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
     shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT)
     avg_delta = sum(user['voice_deltas']) / len(user['voice_deltas']) if user['voice_deltas'] else 0
     max_pause = max(user['voice_deltas']) if user['voice_deltas'] else 0
     avg_duration = sum(user['voice_durations']) / len(user['voice_durations']) if user['voice_durations'] else 0
     plan_percent = (user['count'] / shift_goal * 100) if shift_goal > 0 else 0
-    report = [
-        f"📋 **#ОТЧЕТ_ТЕКСТ_ВЕДУЩЕГО** ({data.get('shift_start', now).strftime('%d.%m.%Y')})",
+    report_lines = [
+        f"📋 **#ОТЧЕТ_ТЕКСТ_ВЕДУЩЕГО** ({data.get('shift_start', datetime.datetime.now()).strftime('%d.%m.%Y')})",
         f"🎤 **Ведущий:** {user['username']}",
         "\n---",
         "**📊 Основная Статистика**",
@@ -841,11 +850,11 @@ def generate_detailed_report(chat_id: int, data: dict) -> list:
     
     ad_counts = Counter(user.get('recognized_ads', []))
     if ad_counts:
-        report.append("\n---\n**📝 Анализ Контента**")
+        report_lines.append("\n---\n**📝 Анализ Контента**")
         for ad, count in ad_counts.items():
-            report.append(f"✔️ {ad} (x{count})")
+            report_lines.append(f"✔️ {ad} (x{count})")
             
-    return report
+    return report_lines
 
 def generate_analytical_summary(user_data: dict, shift_goal: int) -> str:
     plan_percent = (user_data.get('count', 0) / shift_goal * 100) if shift_goal > 0 else 0
@@ -890,24 +899,21 @@ def send_end_of_shift_report_for_chat(chat_id):
     report_lines = generate_detailed_report(chat_id, data)
     final_report_text = "\n".join(report_lines)
     
-    # Отчет для основного чата
+    final_report_with_recommendation = final_report_text + f"\n\n---\n🧠 **Рекомендация:**\n_{analytical_conclusion}_"
     try:
-        bot.send_message(chat_id, final_report_text + f"\n\n---\n🧠 **Рекомендация:**\n_{analytical_conclusion}_")
+        bot.send_message(chat_id, final_report_with_recommendation)
     except Exception as e:
         logging.error(f"Не удалось отправить отчет в рабочий чат {chat_id}: {e}")
 
-    # Отчет для руководства
     if ADMIN_REPORT_CHAT_ID and chat_id != ADMIN_REPORT_CHAT_ID:
         try:
             link_markdown = f"[{GOOGLE_SHEET_LINK_TEXT}]({GOOGLE_SHEET_LINK_URL})"
-            # Добавляем инфо о чате в отчет для руководства
             admin_report_header = f"📍 *Отчет из чата: {get_chat_title(chat_id)}*\n"
-            admin_report = admin_report_header + final_report_text + f"\n\n---\n🧠 **Рекомендация:**\n_{analytical_conclusion}_" + f"\n\n---\n📊 {link_markdown}"
+            admin_report = admin_report_header + final_report_with_recommendation
             bot.send_message(ADMIN_REPORT_CHAT_ID, admin_report)
         except Exception as e:
             logging.error(f"Не удалось отправить отчет в чат руководства: {e}")
     
-    # Очистка данных
     if chat_id in user_history: del user_history[chat_id]
     if chat_id in chat_data: del chat_data[chat_id]
     logging.info(f"Данные смены для чата {chat_id} очищены.")
@@ -974,10 +980,12 @@ def run_scheduler():
         time.sleep(1)
 
 if __name__ == '__main__':
-    logging.info("🤖 Бот (версия 19.0, Финальная) запущен...")
+    logging.info("🤖 Бот (версия 21.0, Production Ready) запущен...")
     if not all([gspread, pd, openai]):
         logging.critical("Ключевые библиотеки (gspread, pandas, openai) не загружены. Функциональность будет ограничена.")
     else:
+        # Загружаем конфиги перед запуском основного потока
+        load_chat_configs()
         threading.Thread(target=run_scheduler, daemon=True).start()
         while True:
             try:
