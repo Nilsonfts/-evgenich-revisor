@@ -44,7 +44,10 @@ def is_admin(bot, user_id: int, chat_id: int) -> bool:
         return False
 
 def admin_required(bot):
-    """Декоратор для проверки прав администратора."""
+    """
+    Декоратор для проверки прав администратора.
+    Используется как @admin_required(bot).
+    """
     def decorator(func):
         @wraps(func)
         def wrapper(message):
@@ -55,7 +58,7 @@ def admin_required(bot):
     return decorator
 
 def get_username(user: types.User) -> str:
-    """Возвращаетформатированное имя пользователя."""
+    """Возвращает форматированное имя пользователя."""
     return f"@{user.username}" if user.username else user.first_name
 
 def get_chat_title(bot, chat_id: int) -> str:
@@ -108,4 +111,5 @@ def save_history_event(chat_id: int, user_id: int, username: str, event_descript
         user_history[chat_id] = []
     now_str = datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
     user_history[chat_id].append(f"{now_str} | {username} ({user_id}) | {event_description}")
+    # Для наглядности можно добавить print или logging
     logging.info(f"HISTORY [{chat_id}]: {username} - {event_description}")
