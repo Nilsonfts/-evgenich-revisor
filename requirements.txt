@@ -1,6 +1,6 @@
-pyTelegramBotAPI
-schedule
-pytz
-gspread
-google-auth-oauthlib
+aiogram==3.5.0
+python-dotenv
 openai
+pyTelegramBotAPI==4.16.1
+pytz
+schedule
