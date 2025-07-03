@@ -117,7 +117,8 @@ def register_handlers(bot):
 
         if chat_data[chat_id]['main_id'] == user_id:
             if is_new_main:
-                bot.send_message(chat_id, f"👑 {username} становится главным, записав первое ГС!")
+                phrase = random.choice(soviet_phrases.get("system_messages", {}).get('first_voice_new_main', ["👑 {username} становится главным, записав первое ГС!"]))
+                bot.send_message(chat_id, phrase.format(username=username))
                 save_history_event(chat_id, user_id, username, "Стал главным (первое ГС)")
 
             user_data = chat_data[chat_id]['users'][user_id]
@@ -126,7 +127,8 @@ def register_handlers(bot):
                 time_since_last = (now_moscow - user_data['last_voice_time']).total_seconds()
                 if time_since_last < VOICE_COOLDOWN_SECONDS:
                     remaining = int(VOICE_COOLDOWN_SECONDS - time_since_last)
-                    bot.reply_to(message, f"Слишком часто! Пауза {remaining} сек.", disable_notification=True)
+                    phrase = random.choice(soviet_phrases.get("system_messages", {}).get('voice_cooldown', ["Слишком часто! Пауза {remaining} сек."]))
+                    bot.reply_to(message, phrase.format(remaining=remaining), disable_notification=True)
                     return
 
             if message.voice.duration < VOICE_MIN_DURATION_SECONDS:
@@ -160,14 +162,21 @@ def register_handlers(bot):
         chat_id = message.chat.id
         user_id = message.from_user.id
         if chat_id > 0 or chat_data.get(chat_id, {}).get('main_id') != user_id: return
+        
         user_data = chat_data[chat_id]['users'][user_id]
+        
         if user_data.get('on_break'):
-            return bot.reply_to(message, "Вы уже на перерыве.")
+            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('break_already_on', ["Вы уже на перерыве."]))
+            return bot.reply_to(message, phrase)
+            
         now_moscow = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
         last_break = user_data.get('last_break_time')
+        
         if last_break and (now_moscow - last_break).total_seconds() / 60 < BREAK_DELAY_MINUTES:
             remaining_time = int(BREAK_DELAY_MINUTES - (now_moscow - last_break).total_seconds() / 60)
-            return bot.reply_to(message, f"Следующий перерыв можно взять через {remaining_time} мин.")
+            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('break_cooldown', ["Следующий перерыв можно взять через {remaining_time} мин."]))
+            return bot.reply_to(message, phrase.format(remaining_time=remaining_time))
+            
         user_data.update({
             'on_break': True, 'break_start_time': now_moscow,
             'last_break_time': now_moscow, 'breaks_count': user_data['breaks_count'] + 1,
@@ -181,6 +190,12 @@ def register_handlers(bot):
         chat_id = message.chat.id
         user_id = message.from_user.id
         if chat_id > 0 or chat_data.get(chat_id, {}).get('main_id') != user_id: return
+        
+        # ПРИМЕЧАНИЕ: Логика возвращения (вовремя или с опозданием) находится в `utils.handle_user_return`.
+        # Чтобы использовать фразы "return_on_time" и "return_late" из phrases.py,
+        # необходимо модифицировать саму функцию handle_user_return в файле utils.py,
+        # чтобы она возвращала соответствующее сообщение или принимала их как аргументы.
+        # Сейчас она вызывается как есть.
         handle_user_return(bot, chat_id, user_id)
 
     # ========================================
@@ -192,7 +207,8 @@ def register_handlers(bot):
             transfer_info = pending_transfers.pop(chat_id)
             try:
                 bot.edit_message_reply_markup(chat_id, transfer_info['message_id'], reply_markup=None)
-                bot.send_message(chat_id, "Время на принятие смены вышло. Предложение аннулировано.")
+                phrase = random.choice(soviet_phrases.get("system_messages", {}).get('shift_transfer_timeout', ["Время на принятие смены вышло. Предложение аннулировано."]))
+                bot.send_message(chat_id, phrase)
             except Exception as e:
                 logging.warning(f"Не удалось отменить передачу смены (сообщение могло быть удалено): {e}")
 
@@ -222,11 +238,10 @@ def register_handlers(bot):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("✅ Принять смену", callback_data=f"transfer_accept_{to_user.id}"))
         
-        sent_message = bot.send_message(chat_id, 
-            f"🤝 {from_username} предлагает передать смену вам, {to_username}.\n"
-            f"Нажмите кнопку ниже в течение 5 минут, чтобы подтвердить.",
-            reply_markup=markup
-        )
+        phrase_template = random.choice(soviet_phrases.get("system_messages", {}).get('shift_transfer_offer', ["."]))
+        text = phrase_template.format(from_username=from_username, to_username=to_username)
+        
+        sent_message = bot.send_message(chat_id, text, reply_markup=markup)
         
         timer = threading.Timer(300, cancel_transfer, args=[chat_id])
         timer.start()
@@ -268,7 +283,9 @@ def register_handlers(bot):
             bot.delete_message(chat_id, call.message.message_id)
         except Exception: pass
         
-        bot.send_message(chat_id, f"👑 Смена успешно передана от {transfer_info['from_username']} к {transfer_info['to_username']}!")
+        phrase_template = random.choice(soviet_phrases.get("system_messages", {}).get('shift_transfer_success', ["."]))
+        text = phrase_template.format(from_username=transfer_info['from_username'], to_username=transfer_info['to_username'])
+        bot.send_message(chat_id, text)
         save_history_event(chat_id, user_id, transfer_info['to_username'], f"Принял смену от {transfer_info['from_username']}")
 
 
@@ -278,18 +295,28 @@ def register_handlers(bot):
     @bot.message_handler(commands=['start', 'старт'])
     def handle_start(message: types.Message):
         chat_id = message.chat.id
-        if chat_id > 0: return bot.reply_to(message, "Эта команда работает только в групповом чате.")
+        
+        if chat_id > 0: 
+            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('group_only_command', ["Эта команда работает только в групповом чате."]))
+            return bot.reply_to(message, phrase)
+            
         from_user = message.from_user
         username = get_username(from_user)
+        
         if chat_id not in chat_data: init_shift_data(chat_id)
         if from_user.id not in chat_data[chat_id]['users']:
             chat_data[chat_id]['users'][from_user.id] = init_user_data(from_user.id, username)
+            
         if chat_data[chat_id].get('main_id') is not None:
             main_username = chat_data[chat_id].get('main_username', 'Неизвестно')
-            return bot.reply_to(message, f"Смена уже занята. Текущий главный: {main_username}.")
+            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('start_shift_fail_taken', ["Смена уже занята. Текущий главный: {main_username}."]))
+            return bot.reply_to(message, phrase.format(main_username=main_username))
+            
         chat_data[chat_id]['main_id'] = from_user.id
         chat_data[chat_id]['main_username'] = username
-        bot.send_message(chat_id, f"👑 {username}, вы заступили на смену! Удачи!")
+        
+        phrase = random.choice(soviet_phrases.get("system_messages", {}).get('start_shift_success', ["👑 {username}, вы заступили на смену! Удачи!"]))
+        bot.send_message(chat_id, phrase.format(username=username))
         save_history_event(chat_id, from_user.id, username, "Стал главным на смене (команда /start)")
 
     @bot.message_handler(commands=['промежуточный', 'check'])
@@ -297,11 +324,18 @@ def register_handlers(bot):
         chat_id = message.chat.id
         user_id = message.from_user.id
         data = chat_data.get(chat_id)
+        
         if not data or not data.get('main_id'):
-            return bot.reply_to(message, "Смена в этом чате еще не началась.")
+            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('shift_not_started', ["Смена в этом чате еще не началась."]))
+            return bot.reply_to(message, phrase)
+            
         main_user_id = data['main_id']
+        
         if user_id != main_user_id:
-            return bot.reply_to(message, f"Эту команду может использовать только текущий главный на смене: {data.get('main_username')}.")
+            main_username = data.get('main_username')
+            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('only_for_main_user', ["Эту команду может использовать только текущий главный на смене: {main_username}."]))
+            return bot.reply_to(message, phrase.format(main_username=main_username))
+            
         main_user_data = data.get('users', {}).get(main_user_id)
         shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT)
         plan_percent = (main_user_data['count'] / shift_goal * 100) if shift_goal > 0 else 0
@@ -351,7 +385,8 @@ def register_handlers(bot):
             bot.send_message(message.chat.id, report_text)
         except Exception as e:
             logging.error(f"Ошибка анализа Google Sheets для /сводка: {e}")
-            bot.send_message(message.chat.id, "Произошла ошибка при анализе данных из таблицы.")
+            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('generic_error', ["Произошла ошибка при выполнении команды."]))
+            bot.send_message(message.chat.id, phrase)
 
     @bot.message_handler(commands=['help'])
     def handle_help(message: types.Message):
@@ -433,7 +468,8 @@ def register_handlers(bot):
         chat_id = message.chat.id
         data = chat_data.get(chat_id)
         if not data or not data.get('main_id'):
-            return bot.send_message(chat_id, "Смена в этом чате еще не началась.")
+            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('shift_not_started', ["Смена в этом чате еще не началась."]))
+            return bot.send_message(chat_id, phrase)
         user_data = data.get('users', {}).get(data['main_id'])
         if not user_data:
             return bot.send_message(chat_id, "В текущей смене нет данных о ведущем.")
@@ -471,7 +507,8 @@ def register_handlers(bot):
             bot.send_message(chat_id, "\n".join(report_lines))
         except Exception as e:
             logging.error(f"Ошибка анализа Google Sheets для /rating: {e}")
-            bot.send_message(chat_id, "Произошла ошибка при анализе данных из таблицы.")
+            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('generic_error', ["Произошла ошибка при выполнении команды."]))
+            bot.send_message(chat_id, phrase)
         
     @bot.message_handler(commands=['problems'])
     @admin_required(bot)
