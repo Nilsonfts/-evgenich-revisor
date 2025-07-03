@@ -1,4 +1,4 @@
-# scheduler.py
+# scheduler.py (ИСПРАВЛЕННАЯ ВЕРСИЯ)
 import schedule
 import time
 import logging
@@ -100,7 +100,9 @@ def check_user_activity(bot):
                 last_reminder = user_data.get('last_break_reminder_time')
                 if not last_reminder or (now_moscow - last_reminder).total_seconds() > 120: # Напоминаем не чаще, чем раз в 2 минуты
                     try:
-                        bot.send_message(chat_id, f"@{user_data['username']}, {random.choice(soviet_phrases.get('return_demand', ['Пора вернуться к работе!']))}")
+                        # ИСПРАВЛЕНО: Заменен ключ 'return_demand' на 'return_demand_hard'
+                        phrase = random.choice(soviet_phrases.get('return_demand_hard', ['Пора вернуться к работе!']))
+                        bot.send_message(chat_id, f"@{user_data['username']}, {phrase}")
                         user_data['last_break_reminder_time'] = now_moscow
                     except Exception as e:
                         logging.error(f"Не удалось отправить напоминание о перерыве в чат {chat_id}: {e}")
@@ -112,7 +114,9 @@ def check_user_activity(bot):
             inactive_minutes = (now_moscow - last_voice_time).total_seconds() / 60
             if inactive_minutes > VOICE_TIMEOUT_MINUTES and not user_data.get('voice_timeout_reminder_sent'):
                 try:
-                    bot.send_message(chat_id, f"@{user_data['username']}, {random.choice(soviet_phrases.get('voice_reminder', ['Вы давно не выходили в эфир.']))}")
+                    # ИСПРАВЛЕНО: Заменен ключ 'voice_reminder' на 'pace_reminder'
+                    phrase = random.choice(soviet_phrases.get('pace_reminder', ['Вы давно не выходили в эфир.']))
+                    bot.send_message(chat_id, f"@{user_data['username']}, {phrase}")
                     user_data['voice_timeout_reminder_sent'] = True
                 except Exception as e:
                     logging.error(f"Не удалось отправить напоминание о ГС в чат {chat_id}: {e}")
