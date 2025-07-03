@@ -1,4 +1,4 @@
-# utils.py (ИСПРАВЛЕННАЯ ВЕРСИЯ С ФРАЗАМИ)
+# utils.py (ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ)
 import json
 import logging
 import os
@@ -82,7 +82,8 @@ def init_shift_data(chat_id: int):
     from state import chat_configs
     chat_data[chat_id] = {
         'main_id': None, 'users': {}, 'main_username': 'N/A',
-        'shift_start': datetime.datetime.now(pytz.timezone('Europe/Moscow')),
+        # ИСПРАВЛЕНО: Сохраняем время начала как строку для JSON-совместимости
+        'shift_start': datetime.datetime.now(pytz.timezone('Europe/Moscow')).isoformat(),
         'shift_goal': chat_configs.get(chat_id, {}).get('default_goal', EXPECTED_VOICES_PER_SHIFT)
     }
 
@@ -92,24 +93,26 @@ def handle_user_return(bot, chat_id: int, user_id: int):
     if not user or not user.get('on_break'): return
     
     now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
-    break_duration_minutes = (now - user['break_start_time']).total_seconds() / 60
+    
+    # ИСПРАВЛЕНО: Конвертируем строку со временем начала перерыва обратно в datetime
+    break_start_time_str = user.get('break_start_time')
+    if not break_start_time_str: return
+    break_start_time = datetime.datetime.fromisoformat(break_start_time_str)
+    
+    break_duration_minutes = (now - break_start_time).total_seconds() / 60
     user['on_break'] = False
     
-    # Если пользователь опоздал
     if break_duration_minutes > BREAK_DURATION_MINUTES:
         user['late_returns'] += 1
         late_minutes = int(break_duration_minutes - BREAK_DURATION_MINUTES)
         
-        # Выбираем случайную фразу для опоздавшего
         phrase_template = random.choice(
             soviet_phrases.get("system_messages", {}).get('return_late', ["✅ {username}, с возвращением! Вы опоздали на {minutes} мин."])
         )
         message_text = phrase_template.format(username=user['username'], minutes=late_minutes)
         bot.send_message(chat_id, message_text)
         
-    # Если пользователь вернулся вовремя
     else:
-        # Выбираем случайную фразу для того, кто вернулся вовремя
         phrase_template = random.choice(
             soviet_phrases.get("system_messages", {}).get('return_on_time', ["👍 {username}, с возвращением! Молодец, что вернулись вовремя."])
         )
@@ -130,12 +133,18 @@ def save_history_event(chat_id: int, user_id: int, username: str, event_descript
 def generate_detailed_report(chat_id: int, data: dict) -> list:
     """Собирает текстовый отчет на основе данных о смене."""
     main_id = data.get('main_id')
-    if not main_id:
-        return ["Ошибка: в смене нет главного ведущего."]
+    if not main_id: return ["Ошибка: в смене нет главного ведущего."]
         
-    user_data = data.get('users', {}).get(main_id)
-    if not user_data:
-        return ["Ошибка: нет данных о ведущем."]
+    user_data = data.get('users', {}).get(str(main_id)) or data.get('users', {}).get(main_id)
+    if not user_data: return ["Ошибка: нет данных о ведущем."]
+
+    # ИСПРАВЛЕНО: Конвертируем строку с датой начала смены обратно в datetime для форматирования
+    shift_start_str = data.get('shift_start')
+    if shift_start_str:
+        shift_start_dt = datetime.datetime.fromisoformat(shift_start_str)
+        report_date = shift_start_dt.strftime('%d.%m.%Y')
+    else:
+        report_date = datetime.datetime.now().strftime('%d.%m.%Y')
 
     shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT)
     plan_percent = (user_data['count'] / shift_goal * 100) if shift_goal > 0 else 0
@@ -144,7 +153,7 @@ def generate_detailed_report(chat_id: int, data: dict) -> list:
     avg_duration = sum(user_data.get('voice_durations', [])) / len(user_data['voice_durations']) if user_data.get('voice_durations') else 0
 
     report_lines = [
-        f"📋 **#ОТЧЕТ_ТЕКСТ_ВЕДУЩЕГО** ({data.get('shift_start', datetime.datetime.now()).strftime('%d.%m.%Y')})",
+        f"📋 **#ОТЧЕТ_ТЕКСТ_ВЕДУЩЕГО** ({report_date})",
         f"🎤 **Ведущий:** {user_data.get('username', 'N/A')}",
         "\n---",
         "**📊 Основная Статистика**",
