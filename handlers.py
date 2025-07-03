@@ -1,4 +1,4 @@
-# handlers.py
+# handlers.py (ИСПРАВЛЕННАЯ ВЕРСИЯ)
 """
 Этот файл содержит все обработчики сообщений и кнопок (хендлеры) для бота.
 Он импортирует необходимые функции и переменные из других модулей.
@@ -21,7 +21,7 @@ from g_sheets import get_sheet
 from utils import (
     is_admin, admin_required, get_username, get_chat_title,
     init_user_data, init_shift_data, handle_user_return,
-    save_history_event, save_json_data, get_full_report_text
+    save_history_event, save_json_data, generate_detailed_report # Заменили get_full_report_text
 )
 from scheduler import send_end_of_shift_report_for_chat
 
@@ -191,11 +191,10 @@ def register_handlers(bot):
         user_id = message.from_user.id
         if chat_id > 0 or chat_data.get(chat_id, {}).get('main_id') != user_id: return
         
-        # ПРИМЕЧАНИЕ: Логика возвращения (вовремя или с опозданием) находится в `utils.handle_user_return`.
-        # Чтобы использовать фразы "return_on_time" и "return_late" из phrases.py,
-        # необходимо модифицировать саму функцию handle_user_return в файле utils.py,
-        # чтобы она возвращала соответствующее сообщение или принимала их как аргументы.
-        # Сейчас она вызывается как есть.
+        # ПРИМЕЧАНИЕ: Основная логика возвращения (и отправка сообщений) находится в функции `utils.handle_user_return`.
+        # Чтобы использовать кастомные фразы из `phrases.py` ("return_on_time", "return_late"),
+        # необходимо модифицировать саму функцию `handle_user_return` в файле `utils.py`,
+        # чтобы она принимала `soviet_phrases` и выбирала сообщения из них.
         handle_user_return(bot, chat_id, user_id)
 
     # ========================================
@@ -470,10 +469,11 @@ def register_handlers(bot):
         if not data or not data.get('main_id'):
             phrase = random.choice(soviet_phrases.get("system_messages", {}).get('shift_not_started', ["Смена в этом чате еще не началась."]))
             return bot.send_message(chat_id, phrase)
-        user_data = data.get('users', {}).get(data['main_id'])
-        if not user_data:
-            return bot.send_message(chat_id, "В текущей смене нет данных о ведущем.")
-        report_text = get_full_report_text(bot, chat_id, user_data, data)
+        
+        # ИСПРАВЛЕНО: Теперь используется правильная функция generate_detailed_report
+        # для создания отчета, и результат корректно форматируется для отправки.
+        report_lines = generate_detailed_report(chat_id, data)
+        report_text = "\n".join(report_lines)
         bot.send_message(chat_id, report_text, parse_mode="Markdown")
     
     @bot.message_handler(commands=['rating'])
@@ -680,17 +680,18 @@ def register_handlers(bot):
             markup.add(types.InlineKeyboardButton(brand.upper(), callback_data=f"ad_brand_{brand}"))
         markup.add(types.InlineKeyboardButton("➕ Добавить новый бренд", callback_data="ad_addbrand_form"))
         bot.send_message(message.chat.id, "📝 Выберите бренд для управления рекламой:", reply_markup=markup)
-        
-    def show_ad_cities_menu(message: types.Message, brand: str):
+    
+    # ИСПРАВЛЕНО: Функции ниже теперь отправляют новое сообщение вместо попытки редактировать старое
+    def show_ad_cities_menu(chat_id: int, brand: str):
         markup = types.InlineKeyboardMarkup(row_width=2)
         cities = list(ad_templates.get(brand, {}).keys())
         for city in cities:
             markup.add(types.InlineKeyboardButton(city.capitalize(), callback_data=f"ad_city_{brand}_{city}"))
         markup.add(types.InlineKeyboardButton("➕ Добавить новый город", callback_data=f"ad_addcity_form_{brand}"))
         markup.add(types.InlineKeyboardButton("« Назад к брендам", callback_data="ad_backtobrand"))
-        bot.edit_message_text(f"Бренд: *{brand.upper()}*\nВыберите город:", message.chat.id, message.message_id, reply_markup=markup)
+        bot.send_message(chat_id, f"Бренд: *{brand.upper()}*\nВыберите город:", reply_markup=markup, parse_mode="Markdown")
     
-    def show_ad_actions_menu(message: types.Message, brand: str, city: str):
+    def show_ad_actions_menu(chat_id: int, brand: str, city: str):
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
             types.InlineKeyboardButton("👁️‍🗨️ Просмотреть шаблоны", callback_data=f"ad_view_{brand}_{city}"),
@@ -698,42 +699,43 @@ def register_handlers(bot):
             types.InlineKeyboardButton("➖ Удалить шаблон", callback_data=f"ad_delform_{brand}_{city}"),
             types.InlineKeyboardButton("« Назад к городам", callback_data=f"ad_backtocity_{brand}")
         )
-        bot.edit_message_text(f"Бренд: *{brand.upper()}* / Город: *{city.capitalize()}*\nВыберите действие:", message.chat.id, message.message_id, reply_markup=markup)
+        bot.send_message(chat_id, f"Бренд: *{brand.upper()}* / Город: *{city.capitalize()}*\nВыберите действие:", reply_markup=markup, parse_mode="Markdown")
 
-    def show_templates_for_deletion(call: types.CallbackQuery, brand: str, city: str):
-        message = call.message
+    def show_templates_for_deletion(chat_id: int, brand: str, city: str):
         templates = ad_templates.get(brand, {}).get(city, {})
         if not templates:
-            bot.answer_callback_query(call.id, "Здесь нет шаблонов для удаления.", show_alert=True)
+            bot.send_message(chat_id, "Здесь нет шаблонов для удаления.")
             return
         markup = types.InlineKeyboardMarkup(row_width=1)
         for tpl_key in templates.keys():
             markup.add(types.InlineKeyboardButton(f"❌ {tpl_key}", callback_data=f"ad_delete_{brand}_{city}_{tpl_key}"))
         markup.add(types.InlineKeyboardButton("« Назад", callback_data=f"ad_city_{brand}_{city}"))
-        bot.edit_message_text("Выберите шаблон для удаления:", message.chat.id, message.message_id, reply_markup=markup)
+        bot.send_message(chat_id, "Выберите шаблон для удаления:", reply_markup=markup)
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith('ad_'))
     def handle_ad_callbacks(call: types.CallbackQuery):
         if not is_admin(bot, call.from_user.id, call.message.chat.id):
             return bot.answer_callback_query(call.id, "⛔️ Доступ запрещен!", show_alert=True)
         
-        message = call.message
+        # ИСПРАВЛЕНО: Теперь сообщение удаляется после того, как все данные из него извлечены
+        chat_id = call.message.chat.id
+        message_id = call.message.message_id
         
-        try: # Пытаемся удалить исходное сообщение с кнопками
-            bot.delete_message(message.chat.id, message.message_id)
-        except Exception as e:
-            logging.info(f"Не удалось удалить сообщение при обработке ad_callback: {e}")
-
         bot.answer_callback_query(call.id)
         parts = call.data.split('_')
         action = parts[1]
 
+        try:
+            bot.delete_message(chat_id, message_id)
+        except Exception as e:
+            logging.info(f"Не удалось удалить сообщение при обработке ad_callback: {e}")
+
         if action == "brand":
             brand = parts[2]
-            show_ad_cities_menu(message, brand)
+            show_ad_cities_menu(chat_id, brand)
         elif action == "city":
             brand, city = parts[2], parts[3]
-            show_ad_actions_menu(message, brand, city)
+            show_ad_actions_menu(chat_id, brand, city)
         elif action == "view":
             brand, city = parts[2], parts[3]
             templates = ad_templates.get(brand, {}).get(city, {})
@@ -743,29 +745,30 @@ def register_handlers(bot):
                 for name, content in templates.items():
                     text_lines.append(f"🔹 *{name}*:\n`{content}`\n")
                 text = "\n".join(text_lines)
-            bot.send_message(message.chat.id, text, parse_mode="Markdown")
+            bot.send_message(chat_id, text, parse_mode="Markdown")
         elif action == "addform":
             brand, city = parts[2], parts[3]
-            user_id = message.chat.id
+            user_id = call.from_user.id # Используем ID пользователя, а не чата, для user_states
             user_states[user_id] = {"state": "awaiting_ad_template", "brand": brand, "city": city}
-            bot.send_message(message.chat.id, "Отправьте сообщение в формате:\n\n`Название шаблона`\n`Текст шаблона...`\n\nДля отмены введите /cancel")
+            bot.send_message(chat_id, "Отправьте сообщение в формате:\n\n`Название шаблона`\n`Текст шаблона...`\n\nДля отмены введите /cancel")
         elif action == "delform":
             brand, city = parts[2], parts[3]
-            show_templates_for_deletion(call, brand, city)
+            show_templates_for_deletion(chat_id, brand, city)
         elif action == "delete":
             brand, city, tpl_key = parts[2], parts[3], "_".join(parts[4:])
             if tpl_key in ad_templates.get(brand, {}).get(city, {}):
                 del ad_templates[brand][city][tpl_key]
                 if save_json_data(AD_TEMPLATES_FILE, ad_templates):
-                    bot.answer_callback_query(call.id, f"Шаблон '{tpl_key}' удален.", show_alert=True)
-                    show_templates_for_deletion(call, brand, city)
+                     bot.send_message(chat_id, f"Шаблон '{tpl_key}' удален.")
+                     # После удаления снова показываем список для дальнейших действий
+                     show_templates_for_deletion(chat_id, brand, city)
                 else:
-                    bot.answer_callback_query(call.id, "Ошибка сохранения!", show_alert=True)
+                    bot.send_message(chat_id, "Ошибка сохранения!")
         elif action == 'backtobrand':
-            command_ads(message)
+            command_ads(call.message)
         elif action == 'backtocity':
             brand = parts[2]
-            show_ad_cities_menu(message, brand)
+            show_ad_cities_menu(chat_id, brand)
 
     @bot.message_handler(func=lambda message: user_states.get(message.from_user.id, {}).get("state") == "awaiting_ad_template")
     def receive_ad_template_to_add(message: types.Message):
@@ -783,7 +786,7 @@ def register_handlers(bot):
             if city not in ad_templates[brand]: ad_templates[brand][city] = {}
             ad_templates[brand][city][name] = text
             if save_json_data(AD_TEMPLATES_FILE, ad_templates):
-                bot.send_message(message.chat.id, f"✅ Шаблон *'{name}'* успешно добавлен для *{brand.upper()}/{city.capitalize()}*.")
+                bot.send_message(message.chat.id, f"✅ Шаблон *'{name}'* успешно добавлен для *{brand.upper()}/{city.capitalize()}*.", parse_mode="Markdown")
             else:
                 bot.send_message(message.chat.id, "❌ Ошибка сохранения файла шаблонов.")
             del user_states[user_id]
@@ -795,7 +798,7 @@ def register_handlers(bot):
     @bot.callback_query_handler(func=lambda call: True)
     def _debug_all_callbacks(call: types.CallbackQuery):
         try:
-            bot.answer_callback_query(call.id, f"DBG: {call.data}", show_alert=True)
+            bot.answer_callback_query(call.id, f"Необработанный колбэк: {call.data}", show_alert=False)
         except Exception:
             pass
-        bot.send_message(call.message.chat.id, f"🧪 DEBUG: получено необработанное callback_data → {call.data}")
+        logging.warning(f"Получен необработанный callback_data -> {call.data} от {call.from_user.username} в чате {call.message.chat.id}")
