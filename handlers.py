@@ -173,8 +173,8 @@ def register_handlers(bot):
             'last_break_time': now_moscow, 'breaks_count': user_data['breaks_count'] + 1,
             'last_break_reminder_time': None
         })
-        bot.reply_to(message, f"✅ Перерыв на {BREAK_DURATION_MINUTES} минут начат.")
-        save_history_event(chat_id, user_id, get_username(message.from_user), "Ушел на перерыв")
+        response_phrase = random.choice(soviet_phrases.get('break_acknowledgement', ['Перерыв начат.']))
+        bot.reply_to(message, f"{response_phrase} на {BREAK_DURATION_MINUTES} минут.")
 
     @bot.message_handler(func=lambda m: m.text and any(word in m.text.lower().split() for word in RETURN_CONFIRM_WORDS))
     def handle_return_message(message: types.Message):
