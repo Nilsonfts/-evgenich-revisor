@@ -1,15 +1,16 @@
-# utils.py (ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ)
+# utils.py (ИСПРАВЛЕННАЯ ВЕРСИЯ С ФРАЗАМИ)
 import json
 import logging
 import os
 import datetime
 import pytz
+import random
 from telebot import types
 from functools import wraps
 from collections import Counter
 
 # Импортируем переменные и данные из других модулей
-from config import BOSS_ID, BREAK_DURATION_MINUTES, EXPECTED_VOICES_PER_SHIFT
+from config import BOSS_ID, BREAK_DURATION_MINUTES, EXPECTED_VOICES_PER_SHIFT, soviet_phrases
 from state import chat_data, user_history
 
 def load_json_data(filepath, default_value={}):
@@ -86,18 +87,37 @@ def init_shift_data(chat_id: int):
     }
 
 def handle_user_return(bot, chat_id: int, user_id: int):
-    """Обрабатывает возвращение пользователя с перерыва."""
+    """Обрабатывает возвращение пользователя с перерыва, используя фразы из phrases.py."""
     user = chat_data.get(chat_id, {}).get('users', {}).get(user_id)
     if not user or not user.get('on_break'): return
+    
     now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
     break_duration_minutes = (now - user['break_start_time']).total_seconds() / 60
     user['on_break'] = False
+    
+    # Если пользователь опоздал
     if break_duration_minutes > BREAK_DURATION_MINUTES:
         user['late_returns'] += 1
-        bot.send_message(chat_id, f"✅ {user['username']}, с возвращением! Вы опоздали на {int(break_duration_minutes - BREAK_DURATION_MINUTES)} мин.")
+        late_minutes = int(break_duration_minutes - BREAK_DURATION_MINUTES)
+        
+        # Выбираем случайную фразу для опоздавшего
+        phrase_template = random.choice(
+            soviet_phrases.get("system_messages", {}).get('return_late', ["✅ {username}, с возвращением! Вы опоздали на {minutes} мин."])
+        )
+        message_text = phrase_template.format(username=user['username'], minutes=late_minutes)
+        bot.send_message(chat_id, message_text)
+        
+    # Если пользователь вернулся вовремя
     else:
-        bot.send_message(chat_id, f"👍 {user['username']}, с возвращением! Молодец, что вернулись вовремя.")
+        # Выбираем случайную фразу для того, кто вернулся вовремя
+        phrase_template = random.choice(
+            soviet_phrases.get("system_messages", {}).get('return_on_time', ["👍 {username}, с возвращением! Молодец, что вернулись вовремя."])
+        )
+        message_text = phrase_template.format(username=user['username'])
+        bot.send_message(chat_id, message_text)
+        
     save_history_event(chat_id, user_id, user['username'], f"Вернулся с перерыва (длительность {break_duration_minutes:.1f} мин)")
+
 
 def save_history_event(chat_id: int, user_id: int, username: str, event_description: str):
     """Сохраняет событие в лог истории смены."""
@@ -109,7 +129,11 @@ def save_history_event(chat_id: int, user_id: int, username: str, event_descript
 
 def generate_detailed_report(chat_id: int, data: dict) -> list:
     """Собирает текстовый отчет на основе данных о смене."""
-    user_data = data.get('users', {}).get(data.get('main_id'))
+    main_id = data.get('main_id')
+    if not main_id:
+        return ["Ошибка: в смене нет главного ведущего."]
+        
+    user_data = data.get('users', {}).get(main_id)
     if not user_data:
         return ["Ошибка: нет данных о ведущем."]
 
@@ -143,7 +167,7 @@ def generate_detailed_report(chat_id: int, data: dict) -> list:
     return report_lines
 
 def get_full_report_text(report_data: dict) -> str:
-    """Формирует красивый текстовый отчет из словаря данных."""
+    """Формирует красивый текстовый отчет из словаря данных. (В данный момент не используется)"""
     lines = ["📋 Итоговый отчёт:\n"]
     for key, value in report_data.items():
         if isinstance(value, float):
