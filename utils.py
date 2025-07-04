@@ -78,14 +78,20 @@ def init_user_data(user_id: int, username: str) -> dict:
     }
 
 def init_shift_data(chat_id: int):
-    """Создает пустую структуру данных для новой смены в чате."""
+    """Создает или сбрасывает структуру данных для смены в чате."""
     from state import chat_configs
+    # Сохраняем дату последнего отчета, если она есть, перед сбросом
+    last_report_date = chat_data.get(chat_id, {}).get('last_report_date')
+    
     chat_data[chat_id] = {
         'main_id': None, 'users': {}, 'main_username': 'N/A',
-        # ИСПРАВЛЕНО: Сохраняем время начала как строку для JSON-совместимости
         'shift_start': datetime.datetime.now(pytz.timezone('Europe/Moscow')).isoformat(),
-        'shift_goal': chat_configs.get(chat_id, {}).get('default_goal', EXPECTED_VOICES_PER_SHIFT)
+        'shift_goal': chat_configs.get(str(chat_id), {}).get('default_goal', EXPECTED_VOICES_PER_SHIFT),
+        'last_report_date': last_report_date # Восстанавливаем дату
     }
+    if chat_id in user_history:
+        user_history[chat_id].clear()
+
 
 def handle_user_return(bot, chat_id: int, user_id: int):
     """Обрабатывает возвращение пользователя с перерыва, используя фразы из phrases.py."""
@@ -94,7 +100,6 @@ def handle_user_return(bot, chat_id: int, user_id: int):
     
     now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
     
-    # ИСПРАВЛЕНО: Конвертируем строку со временем начала перерыва обратно в datetime
     break_start_time_str = user.get('break_start_time')
     if not break_start_time_str: return
     break_start_time = datetime.datetime.fromisoformat(break_start_time_str)
@@ -138,7 +143,6 @@ def generate_detailed_report(chat_id: int, data: dict) -> list:
     user_data = data.get('users', {}).get(str(main_id)) or data.get('users', {}).get(main_id)
     if not user_data: return ["Ошибка: нет данных о ведущем."]
 
-    # ИСПРАВЛЕНО: Конвертируем строку с датой начала смены обратно в datetime для форматирования
     shift_start_str = data.get('shift_start')
     if shift_start_str:
         shift_start_dt = datetime.datetime.fromisoformat(shift_start_str)
@@ -149,7 +153,11 @@ def generate_detailed_report(chat_id: int, data: dict) -> list:
     shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT)
     plan_percent = (user_data['count'] / shift_goal * 100) if shift_goal > 0 else 0
     avg_delta = sum(user_data.get('voice_deltas', [])) / len(user_data['voice_deltas']) if user_data.get('voice_deltas') else 0
-    max_pause = max(user_data.get('voice_deltas', [0]))
+    
+    # --- ЭТА СТРОКА ИСПРАВЛЕНА ---
+    # Она теперь безопасно обработает случай, когда 'voice_deltas' - это пустой список.
+    max_pause = max(user_data.get('voice_deltas') or [0])
+    
     avg_duration = sum(user_data.get('voice_durations', [])) / len(user_data['voice_durations']) if user_data.get('voice_durations') else 0
 
     report_lines = [
