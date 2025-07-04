@@ -1,4 +1,4 @@
-# scheduler.py (ИСПРАВЛЕННАЯ ВЕРСИЯ)
+# scheduler.py (ИСПРАВЛЕННАЯ И СТАБИЛЬНАЯ ВЕРСИЯ)
 import schedule
 import time
 import logging
@@ -12,15 +12,15 @@ from config import (
     VOICE_TIMEOUT_MINUTES, BREAK_DURATION_MINUTES, GOOGLE_SHEET_LINK_TEXT,
     GOOGLE_SHEET_LINK_URL, ADMIN_REPORT_CHAT_ID, soviet_phrases, EXPECTED_VOICES_PER_SHIFT
 )
-from utils import get_chat_title, generate_detailed_report
+# ИСПРАВЛЕНО: Добавляем импорт функции для сброса состояния
+from utils import get_chat_title, generate_detailed_report, init_shift_data
 from g_sheets import append_shift_to_google_sheet
-from state_manager import save_state # <--- Импорт для сохранения состояния
+from state_manager import save_state
 
 def generate_analytical_summary(user_data: dict, shift_goal: int) -> str:
     """Создает краткую аналитическую сводку по работе ведущего."""
     plan_percent = (user_data.get('count', 0) / shift_goal * 100) if shift_goal > 0 else 0
     lates = user_data.get('late_returns', 0)
-    
     has_long_pauses = any(delta > VOICE_TIMEOUT_MINUTES * 1.5 for delta in user_data.get('voice_deltas', []))
 
     if plan_percent < 50:
@@ -37,7 +37,7 @@ def generate_analytical_summary(user_data: dict, shift_goal: int) -> str:
     return "✅ Отличная работа! Все показатели в норме. Можно ставить в пример."
 
 def send_end_of_shift_report_for_chat(bot, chat_id: int):
-    """Формирует и отправляет финальный отчет по смене, затем очищает данные."""
+    """Формирует и отправляет финальный отчет по смене, затем сбрасывает данные."""
     logging.info(f"Начинаю процедуру закрытия смены для чата {chat_id}...")
     data = chat_data.get(chat_id)
     if not data or not data.get('main_id'):
@@ -49,35 +49,40 @@ def send_end_of_shift_report_for_chat(bot, chat_id: int):
         logging.warning(f"Не найдены данные по ведущему в чате {chat_id}")
         return
 
-    shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT)
-    analytical_conclusion = generate_analytical_summary(main_user_data, shift_goal)
-    
-    append_shift_to_google_sheet(bot, chat_id, data, analytical_conclusion)
-    
-    report_lines = generate_detailed_report(chat_id, data)
-    final_report_text = "\n".join(report_lines)
-    
-    final_report_with_recommendation = final_report_text + f"\n\n---\n🧠 **Рекомендация:**\n_{analytical_conclusion}_"
-    
     try:
-        bot.send_message(chat_id, final_report_with_recommendation, parse_mode="Markdown")
-    except Exception as e:
-        logging.error(f"Не удалось отправить отчет в рабочий чат {chat_id}: {e}")
+        shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT)
+        analytical_conclusion = generate_analytical_summary(main_user_data, shift_goal)
+        
+        # Шаг 1: Сохранение данных в Google Sheets
+        append_shift_to_google_sheet(bot, chat_id, data, analytical_conclusion)
+        
+        # Шаг 2: Формирование текста отчета
+        report_lines = generate_detailed_report(chat_id, data)
+        final_report_text = "\n".join(report_lines)
+        final_report_with_recommendation = final_report_text + f"\n\n---\n🧠 **Рекомендация:**\n_{analytical_conclusion}_"
+        
+        # Шаг 3: Отправка отчета в рабочий чат
+        bot.send_message(chat_id, f"🏁 Смена завершена!\n\n{final_report_with_recommendation}", parse_mode="Markdown")
 
-    if ADMIN_REPORT_CHAT_ID and str(chat_id) != str(ADMIN_REPORT_CHAT_ID):
-        try:
+        # Шаг 4: Отправка отчета в чат руководства
+        if ADMIN_REPORT_CHAT_ID and str(chat_id) != str(ADMIN_REPORT_CHAT_ID):
             link_markdown = f"[{GOOGLE_SHEET_LINK_TEXT}]({GOOGLE_SHEET_LINK_URL})" if GOOGLE_SHEET_LINK_URL else ""
             admin_report_header = f"📍 *Отчет из чата: {get_chat_title(bot, chat_id)}*\n"
             admin_report = f"{admin_report_header}{final_report_with_recommendation}\n\n{link_markdown}"
             bot.send_message(ADMIN_REPORT_CHAT_ID, admin_report, parse_mode="Markdown")
-        except Exception as e:
-            logging.error(f"Не удалось отправить отчет в чат руководства: {e}")
     
-    if chat_id in user_history:
-        del user_history[chat_id]
-    if chat_id in chat_data:
-        del chat_data[chat_id]
-    logging.info(f"Данные смены для чата {chat_id} очищены.")
+        # ИСПРАВЛЕНО: Вместо удаления данных, сбрасываем их.
+        # Это самая важная часть исправления.
+        logging.info(f"Данные смены для чата {chat_id} будут сброшены.")
+        init_shift_data(chat_id) # Используем функцию сброса
+        
+        # Сохраняем дату последнего отчета, чтобы избежать дублей
+        chat_data[chat_id]['last_report_date'] = datetime.date.today().isoformat()
+        
+    except Exception as e:
+        logging.error(f"Произошла критическая ошибка при формировании отчета для чата {chat_id}: {e}", exc_info=True)
+        bot.send_message(chat_id, "❌ Произошла ошибка при формировании финального отчета. Данные не были сброшены. Попробуйте снова или обратитесь к администратору.")
+
 
 def check_user_activity(bot):
     """Проверяет активность пользователей и отправляет напоминания."""
@@ -91,32 +96,29 @@ def check_user_activity(bot):
         if not user_data:
             continue
 
+        # Проверка тех, кто на перерыве
         if user_data.get('on_break'):
             break_start_time_str = user_data.get('break_start_time')
             if break_start_time_str:
-                # ИСПРАВЛЕНО: Конвертируем строку обратно в datetime для сравнения
                 break_start_time = datetime.datetime.fromisoformat(break_start_time_str)
                 if (now_moscow - break_start_time).total_seconds() / 60 > BREAK_DURATION_MINUTES:
                     last_reminder_str = user_data.get('last_break_reminder_time')
                     if not last_reminder_str or (now_moscow - datetime.datetime.fromisoformat(last_reminder_str)).total_seconds() > 120:
                         try:
-                            # ИСПРАВЛЕНО: Ключ для фразы
                             phrase = random.choice(soviet_phrases.get('return_demand_hard', ['Пора вернуться к работе!']))
                             bot.send_message(chat_id, f"@{user_data['username']}, {phrase}")
-                            # ИСПРАВЛЕНО: Сохраняем время в формате строки для JSON
                             user_data['last_break_reminder_time'] = now_moscow.isoformat()
                         except Exception as e:
                             logging.error(f"Не удалось отправить напоминание о перерыве в чат {chat_id}: {e}")
             continue
 
+        # Проверка неактивных в эфире
         last_voice_time_str = user_data.get('last_voice_time')
         if last_voice_time_str:
-            # ИСПРАВЛЕНО: Конвертируем строку обратно в datetime
             last_voice_time = datetime.datetime.fromisoformat(last_voice_time_str)
             inactive_minutes = (now_moscow - last_voice_time).total_seconds() / 60
             if inactive_minutes > VOICE_TIMEOUT_MINUTES and not user_data.get('voice_timeout_reminder_sent'):
                 try:
-                    # ИСПРАВЛЕНО: Ключ для фразы
                     phrase = random.choice(soviet_phrases.get('pace_reminder', ['Вы давно не выходили в эфир.']))
                     bot.send_message(chat_id, f"@{user_data['username']}, {phrase}")
                     user_data['voice_timeout_reminder_sent'] = True
@@ -134,32 +136,22 @@ def check_for_shift_end(bot):
         try:
             local_tz = pytz.timezone(tz_name)
             now_local = datetime.datetime.now(local_tz)
-            end_time_obj = datetime.datetime.strptime(end_time_str, '%H:%M').time()
             
-            report_time_obj = (datetime.datetime.combine(now_local.date(), end_time_obj) + datetime.timedelta(minutes=1)).time()
-            
-            if chat_data.get(chat_id, {}).get('main_id'):
-                if now_local.time().strftime('%H:%M') == report_time_obj.strftime('%H:%M'):
-                    # ИСПРАВЛЕНО: Конвертируем строку с датой для сравнения
+            # ИСПРАВЛЕНО: Сравниваем напрямую, без лишних вычислений
+            if now_local.strftime('%H:%M') == end_time_str:
+                if chat_data.get(chat_id, {}).get('main_id'):
                     last_report_date_str = chat_data[chat_id].get('last_report_date')
-                    last_report_date = datetime.date.fromisoformat(last_report_date_str) if last_report_date_str else None
-
-                    if last_report_date != now_local.date():
-                        logging.info(f"Наступило время ({report_time_obj.strftime('%H:%M')}) для отчета в чате {chat_id} (ТЗ: {tz_name}).")
+                    
+                    if not last_report_date_str or last_report_date_str != now_local.date().isoformat():
+                        logging.info(f"Наступило время ({end_time_str}) для отчета в чате {chat_id} (ТЗ: {tz_name}).")
                         send_end_of_shift_report_for_chat(bot, chat_id)
-                        
-                        if chat_id in chat_data:
-                            # ИСПРАВЛЕНО: Сохраняем дату в формате строки для JSON
-                            chat_data[chat_id]['last_report_date'] = now_local.date().isoformat()
         except Exception as e:
-            logging.error(f"Ошибка в check_for_shift_end для чата {chat_id}: {e}")
+            logging.error(f"Ошибка в check_for_shift_end для чата {chat_id}: {e}", exc_info=True)
 
 def run_scheduler(bot):
     """Основной цикл планировщика, который запускает фоновые проверки."""
     schedule.every(1).minutes.do(check_for_shift_end, bot=bot)
     schedule.every(1).minutes.do(check_user_activity, bot=bot)
-    
-    # НОВАЯ ЗАДАЧА: Сохраняем состояние каждые 5 минут
     schedule.every(5).minutes.do(save_state, chat_data=chat_data, user_history=user_history)
     
     logging.info("Планировщик настроен и запущен. Автосохранение активно.")
