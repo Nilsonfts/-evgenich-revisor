@@ -69,23 +69,34 @@ def append_shift_to_google_sheet(bot, chat_id: int, data: dict, analytical_concl
     plan_percent = (user_data['count'] / shift_goal * 100) if shift_goal > 0 else 0
 
     avg_delta = sum(user_data.get('voice_deltas', [])) / len(user_data['voice_deltas']) if user_data.get('voice_deltas') else 0
-    max_pause = max(user_data.get('voice_deltas', [0]))
+    
+    # --- ЭТА СТРОКА ИСПРАВЛЕНА ---
+    # Она теперь безопасно обработает случай, когда 'voice_deltas' - это пустой список.
+    max_pause = max(user_data.get('voice_deltas') or [0])
+    
     avg_duration = sum(user_data.get('voice_durations', [])) / len(user_data['voice_durations']) if user_data.get('voice_durations') else 0
 
-    chat_config = chat_configs.get(chat_id, {})
+    chat_config = chat_configs.get(str(chat_id), {}) # Используем str(chat_id) для ключа
     brand = chat_config.get('brand', 'N/A')
     city = chat_config.get('city', 'N/A')
 
     ad_counts = Counter(user_data.get('recognized_ads', []))
     recognized_ads_str = ", ".join([f"{ad} (x{count})" for ad, count in ad_counts.items()]) or "Нет данных"
 
+    # Используем время начала смены из данных, если оно есть
+    shift_start_str = data.get('shift_start_time')
+    if shift_start_str:
+        start_date = datetime.datetime.fromisoformat(shift_start_str).strftime('%d.%m.%Y')
+    else:
+        start_date = now_moscow.strftime('%d.%m.%Y')
+        
     row_data = [
-        data.get('shift_start', now_moscow).strftime('%d.%m.%Y'),
-        chat_id,
-        get_chat_title(bot, chat_id),  # Передаем bot в get_chat_title
+        start_date,
+        str(chat_id), # ID чата как строка
+        get_chat_title(bot, chat_id),
         brand,
         city,
-        main_id,
+        str(main_id), # ID ведущего как строка
         user_data.get('username', 'N/A'),
         user_data.get('count', 0),
         shift_goal,
