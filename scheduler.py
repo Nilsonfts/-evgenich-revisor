@@ -112,18 +112,31 @@ def check_user_activity(bot):
                             logging.error(f"Не удалось отправить напоминание о перерыве в чат {chat_id}: {e}")
             continue
 
-        # Проверка неактивных в эфире
+        # --- НОВАЯ ЛОГИКА ПРОВЕРКИ АКТИВНОСТИ В ЭФИРЕ ---
         last_voice_time_str = user_data.get('last_voice_time')
         if last_voice_time_str:
             last_voice_time = datetime.datetime.fromisoformat(last_voice_time_str)
             inactive_minutes = (now_moscow - last_voice_time).total_seconds() / 60
-            if inactive_minutes > VOICE_TIMEOUT_MINUTES and not user_data.get('voice_timeout_reminder_sent'):
-                try:
-                    phrase = random.choice(soviet_phrases.get('pace_reminder', ['Вы давно не выходили в эфир.']))
-                    bot.send_message(chat_id, f"@{user_data['username']}, {phrase}")
-                    user_data['voice_timeout_reminder_sent'] = True
-                except Exception as e:
-                    logging.error(f"Не удалось отправить напоминание о ГС в чат {chat_id}: {e}")
+            
+            # Получаем таймаут для этого чата из конфига, или используем дефолтный
+            chat_timeout = chat_configs.get(str(chat_id), {}).get('voice_timeout', VOICE_TIMEOUT_MINUTES)
+
+            # Если неактивность превысила порог
+            if inactive_minutes > chat_timeout:
+                last_reminder_str = user_data.get('last_activity_reminder_time')
+                
+                # Пора ли отправлять напоминание (если его не было или прошло > 3 минут)
+                should_remind = not last_reminder_str or \
+                                (now_moscow - datetime.datetime.fromisoformat(last_reminder_str)).total_seconds() > 180 # 3 минуты
+
+                if should_remind:
+                    try:
+                        phrase = random.choice(soviet_phrases.get('pace_reminder', ['Вы давно не выходили в эфир.']))
+                        bot.send_message(chat_id, f"@{user_data['username']}, {phrase} (тишина уже {int(inactive_minutes)} мин.)")
+                        # Обновляем время последнего напоминания
+                        user_data['last_activity_reminder_time'] = now_moscow.isoformat()
+                    except Exception as e:
+                        logging.error(f"Не удалось отправить напоминание о ГС в чат {chat_id}: {e}")
 
 def check_for_shift_end(bot):
     """Проверяет, не наступило ли время окончания смены для какого-либо чата."""
