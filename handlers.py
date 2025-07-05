@@ -146,7 +146,8 @@ def register_handlers(bot):
             user_data['count'] += 1
             user_data['last_voice_time'] = now_moscow.isoformat() # Сохраняем как строку
             user_data['voice_durations'].append(message.voice.duration)
-            user_data['voice_timeout_reminder_sent'] = False
+            # Сбрасываем таймер напоминаний об активности, т.к. пользователь проявил активность
+            user_data['last_activity_reminder_time'] = None
 
             if client:
                 try:
@@ -410,6 +411,7 @@ def register_handlers(bot):
             "`/restart` — 🔄 Перезапустить смену",
             "`/report` — ➡️ Отчет досрочно",
             "`/log` — 📜 Выгрузить лог смены",
+            "`/time` — ⏱️ Изменить тайм-аут активности",
             "`/setup_wizard` — 🧙‍♂️ Мастер настройки чата",
         ]
         if user_id == BOSS_ID:
@@ -434,12 +436,46 @@ def register_handlers(bot):
             "`/report` — ➡️ Завершает смену досрочно и отправляет финальный отчет.",
             "\n**УПРАВЛЕНИЕ КОНТЕНТОМ И НАСТРОЙКИ:**\n",
             "`/ads` — 📝 Открывает интерактивное меню для управления рекламными шаблонами (просмотр, добавление, удаление).",
+            "`/time [минуты]` — ⏱️ Устанавливает, через сколько минут бездействия бот начнет напоминать ведущему. *Пример: `/time 25`*",
             "`/setup_wizard` — 🧙‍♂️ Запускает удобный пошаговый мастер для полной настройки чата (рекомендуется).",
         ]
         if message.from_user.id == BOSS_ID:
             help_text.append("`/broadcast` — 📢 Отправляет сообщение во все чаты, где работает бот (только для BOSS).")
         
         bot.reply_to(message, "\n".join(help_text), parse_mode="Markdown")
+
+    # --- НОВАЯ КОМАНДА ДЛЯ УСТАНОВКИ ТАЙМ-АУТА ---
+    @bot.message_handler(commands=['time'])
+    @admin_required(bot)
+    def command_set_timeout(message: types.Message):
+        chat_id = message.chat.id
+        try:
+            args = message.text.split()
+            if len(args) != 2:
+                raise ValueError("Неверное количество аргументов.")
+            
+            new_timeout = int(args[1])
+            if new_timeout <= 0:
+                raise ValueError("Значение должно быть положительным.")
+
+            # Обновляем конфиг для текущего чата
+            if str(chat_id) not in chat_configs:
+                chat_configs[str(chat_id)] = {}
+            
+            chat_configs[str(chat_id)]['voice_timeout'] = new_timeout
+            
+            # Сохраняем изменения в файл
+            if save_json_data(CHAT_CONFIG_FILE, chat_configs):
+                bot.reply_to(message, f"✅ **Успешно!**\nТеперь напоминания об отсутствии голосовых будут приходить через *{new_timeout} минут* бездействия в этом чате.")
+                logging.info(f"Администратор {message.from_user.id} изменил тайм-аут для чата {chat_id} на {new_timeout} минут.")
+            else:
+                bot.reply_to(message, "❌ **Ошибка!**\nНе удалось сохранить новую настройку. Проверьте логи бота.")
+
+        except (ValueError, IndexError):
+            # Если ошибка - отправляем инструкцию
+            default_timeout = chat_configs.get(str(chat_id), {}).get('voice_timeout', VOICE_TIMEOUT_MINUTES)
+            bot.reply_to(message, f"**Неверный формат команды.**\n\nИспользуйте: `/time [минуты]`\n*Пример:* `/time 25`\n\nТекущее значение для этого чата: *{default_timeout} минут*.")
+
 
     @bot.message_handler(commands=['status'])
     @admin_required(bot)
@@ -498,6 +534,9 @@ def register_handlers(bot):
         try:
             df = pd.DataFrame(worksheet.get_all_records())
             if df.empty: return bot.send_message(chat_id, "В таблице нет данных.")
+            # Используем значение из конфига для этого чата, если оно есть, иначе - дефолтное
+            chat_timeout = chat_configs.get(str(chat_id), {}).get('voice_timeout', VOICE_TIMEOUT_MINUTES)
+            
             numeric_cols = ['Выполнение (%)', 'Опозданий (шт)', 'Макс. пауза (мин)']
             for col in numeric_cols:
                 df[col] = df[col].astype(str).str.replace('%', '', regex=False)
@@ -505,7 +544,7 @@ def register_handlers(bot):
             df.dropna(subset=numeric_cols, inplace=True)
             low_perf = df[df['Выполнение (%)'] < 80]
             latecomers = df[df['Опозданий (шт)'] > 0]
-            long_pauses = df[df['Макс. пауза (мин)'] > (VOICE_TIMEOUT_MINUTES * 1.5)]
+            long_pauses = df[df['Макс. пауза (мин)'] > (chat_timeout * 1.5)] # Используем актуальный таймаут
             report_lines = ["🚨 **Анализ проблемных зон**\n"]
             if not low_perf.empty:
                 report_lines.append("*📉 Низкое выполнение плана (<80%):*")
@@ -516,7 +555,7 @@ def register_handlers(bot):
                 for _, row in latecomers.sort_values(by='Дата', ascending=False).iterrows():
                     report_lines.append(f" - {row.get('Дата', 'N/A')} {row.get('Тег Ведущего', 'N/A')}: *{int(row['Опозданий (шт)'])}* раз(а)")
             if not long_pauses.empty:
-                report_lines.append("\n*⏱️ Слишком долгие паузы:*")
+                report_lines.append(f"\n*⏱️ Слишком долгие паузы (дольше {int(chat_timeout*1.5)} мин):*")
                 for _, row in long_pauses.sort_values(by='Дата', ascending=False).iterrows():
                     report_lines.append(f" - {row.get('Дата', 'N/A')} {row.get('Тег Ведущего', 'N/A')}: макс. пауза *{row['Макс. пауза (мин)']:.0f} мин*")
             if len(report_lines) == 1:
