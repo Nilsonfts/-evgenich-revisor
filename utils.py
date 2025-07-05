@@ -72,7 +72,7 @@ def init_user_data(user_id: int, username: str) -> dict:
     return {
         'username': username, 'count': 0, 'on_break': False, 'breaks_count': 0,
         'late_returns': 0, 'last_voice_time': None, 'last_break_time': None,
-        'break_start_time': None, 'last_activity_reminder_time': None, # ИЗМЕНЕНО
+        'break_start_time': None, 'last_activity_reminder_time': None,
         'last_break_reminder_time': None, 'recognized_ads': [],
         'voice_deltas': [], 'voice_durations': []
     }
@@ -154,14 +154,13 @@ def generate_detailed_report(chat_id: int, data: dict) -> list:
     plan_percent = (user_data['count'] / shift_goal * 100) if shift_goal > 0 else 0
     avg_delta = sum(user_data.get('voice_deltas', [])) / len(user_data['voice_deltas']) if user_data.get('voice_deltas') else 0
     
-    # --- ЭТА СТРОКА ИСПРАВЛЕНА ---
-    # Она теперь безопасно обработает случай, когда 'voice_deltas' - это пустой список.
     max_pause = max(user_data.get('voice_deltas') or [0])
     
     avg_duration = sum(user_data.get('voice_durations', [])) / len(user_data['voice_durations']) if user_data.get('voice_durations') else 0
 
     report_lines = [
-        f"📋 **#ОТЧЕТ_ТЕКСТ_ВЕДУЩЕГО** ({report_date})",
+        # ИЗМЕНЕНО: Хэштег обновлен
+        f"📋 **#ОтчетВедущего** ({report_date})",
         f"🎤 **Ведущий:** {user_data.get('username', 'N/A')}",
         "\n---",
         "**📊 Основная Статистика**",
