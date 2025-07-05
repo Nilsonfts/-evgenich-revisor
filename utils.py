@@ -72,7 +72,7 @@ def init_user_data(user_id: int, username: str) -> dict:
     return {
         'username': username, 'count': 0, 'on_break': False, 'breaks_count': 0,
         'late_returns': 0, 'last_voice_time': None, 'last_break_time': None,
-        'break_start_time': None, 'voice_timeout_reminder_sent': False,
+        'break_start_time': None, 'last_activity_reminder_time': None, # ИЗМЕНЕНО
         'last_break_reminder_time': None, 'recognized_ads': [],
         'voice_deltas': [], 'voice_durations': []
     }
