@@ -15,17 +15,22 @@ from state import chat_data, user_history
 # ИМПОРТИРУЕМ НАШИ НОВЫЕ МОДЕЛИ
 from models import UserData, ShiftData
 
- load_json_data
+def load_json_data(filepath, default_value=None):  # noqa: B006
+    """Загружает данные из JSON файла.
 
-def save_json_data(filepath, data):
-    """Сохраняет данные в JSON файл."""
+    Используем None как sentinel, чтобы избежать залипания изменяемого
+    объекта между вызовами функции.
+    """
+    if default_value is None:
+        default_value = {}
+
     try:
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-        return True
+        if os.path.exists(filepath):
+            with open(filepath, "r", encoding="utf-8") as f:
+                return json.load(f)
     except Exception as e:
-        logging.error(f"Ошибка сохранения файла {filepath}: {e}")
-        return False
+        logging.error(f"Ошибка загрузки файла {filepath}: {e}")
+    return default_value
 
 def is_admin(bot, user_id: int, chat_id: int) -> bool:
     """Проверяет, является ли пользователь админом чата."""
