@@ -3,8 +3,7 @@ import json
 import logging
 import os
 
-# Пути к файлам, где будут храниться данные.
-# Рекомендую создать папку 'data' для них.
+# ИЗМЕНЕНО: Пути теперь ведут в папку 'data'
 CHAT_DATA_FILE = 'data/chat_data.json'
 USER_HISTORY_FILE = 'data/user_history.json'
 STATE_FILES = {
