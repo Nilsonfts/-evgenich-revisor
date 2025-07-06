@@ -1,4 +1,4 @@
-# utils.py (ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ)
+# utils.py
 import json
 import logging
 import os
@@ -12,6 +12,8 @@ from collections import Counter
 # Импортируем переменные и данные из других модулей
 from config import BOSS_ID, BREAK_DURATION_MINUTES, EXPECTED_VOICES_PER_SHIFT, soviet_phrases
 from state import chat_data, user_history
+# ИМПОРТИРУЕМ НАШИ НОВЫЕ МОДЕЛИ
+from models import UserData, ShiftData
 
 def load_json_data(filepath, default_value={}):
     """Загружает данные из JSON файла."""
@@ -67,64 +69,67 @@ def get_chat_title(bot, chat_id: int) -> str:
     except Exception:
         return str(chat_id)
 
-def init_user_data(user_id: int, username: str) -> dict:
+# ИЗМЕНЕНО: Функция теперь возвращает объект класса UserData
+def init_user_data(user_id: int, username: str) -> UserData:
     """Создает пустую структуру данных для нового пользователя."""
-    return {
-        'username': username, 'count': 0, 'on_break': False, 'breaks_count': 0,
-        'late_returns': 0, 'last_voice_time': None, 'last_break_time': None,
-        'break_start_time': None, 'last_activity_reminder_time': None,
-        'last_break_reminder_time': None, 'recognized_ads': [],
-        'voice_deltas': [], 'voice_durations': []
-    }
+    return UserData(user_id=user_id, username=username)
 
+# ИЗМЕНЕНО: Функция теперь работает с объектами ShiftData
 def init_shift_data(chat_id: int):
     """Создает или сбрасывает структуру данных для смены в чате."""
     from state import chat_configs
-    # Сохраняем дату последнего отчета, если она есть, перед сбросом
-    last_report_date = chat_data.get(chat_id, {}).get('last_report_date')
     
-    chat_data[chat_id] = {
-        'main_id': None, 'users': {}, 'main_username': 'N/A',
-        'shift_start': datetime.datetime.now(pytz.timezone('Europe/Moscow')).isoformat(),
-        'shift_goal': chat_configs.get(str(chat_id), {}).get('default_goal', EXPECTED_VOICES_PER_SHIFT),
-        'last_report_date': last_report_date # Восстанавливаем дату
-    }
+    # Сохраняем дату последнего отчета, если она есть, перед сбросом
+    last_report_date = None
+    if chat_id in chat_data and chat_data[chat_id]:
+        last_report_date = chat_data[chat_id].last_report_date
+
+    # Создаем новый объект ShiftData
+    new_shift = ShiftData()
+    new_shift.shift_goal = chat_configs.get(str(chat_id), {}).get('default_goal', EXPECTED_VOICES_PER_SHIFT)
+    new_shift.last_report_date = last_report_date # Восстанавливаем дату
+    
+    chat_data[chat_id] = new_shift
+    
     if chat_id in user_history:
         user_history[chat_id].clear()
 
 
+# ИЗМЕНЕНО: Функция теперь работает с объектами UserData
 def handle_user_return(bot, chat_id: int, user_id: int):
     """Обрабатывает возвращение пользователя с перерыва, используя фразы из phrases.py."""
-    user = chat_data.get(chat_id, {}).get('users', {}).get(user_id)
-    if not user or not user.get('on_break'): return
+    shift = chat_data.get(chat_id)
+    if not shift: return
+    
+    user = shift.users.get(user_id)
+    if not user or not user.on_break: return
     
     now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
     
-    break_start_time_str = user.get('break_start_time')
-    if not break_start_time_str: return
-    break_start_time = datetime.datetime.fromisoformat(break_start_time_str)
+    if not user.break_start_time: return
+    break_start_time = datetime.datetime.fromisoformat(user.break_start_time)
     
     break_duration_minutes = (now - break_start_time).total_seconds() / 60
-    user['on_break'] = False
+    user.on_break = False
     
     if break_duration_minutes > BREAK_DURATION_MINUTES:
-        user['late_returns'] += 1
+        user.late_returns += 1
         late_minutes = int(break_duration_minutes - BREAK_DURATION_MINUTES)
         
         phrase_template = random.choice(
             soviet_phrases.get("system_messages", {}).get('return_late', ["✅ {username}, с возвращением! Вы опоздали на {minutes} мин."])
         )
-        message_text = phrase_template.format(username=user['username'], minutes=late_minutes)
+        message_text = phrase_template.format(username=user.username, minutes=late_minutes)
         bot.send_message(chat_id, message_text)
         
     else:
         phrase_template = random.choice(
             soviet_phrases.get("system_messages", {}).get('return_on_time', ["👍 {username}, с возвращением! Молодец, что вернулись вовремя."])
         )
-        message_text = phrase_template.format(username=user['username'])
+        message_text = phrase_template.format(username=user.username)
         bot.send_message(chat_id, message_text)
         
-    save_history_event(chat_id, user_id, user['username'], f"Вернулся с перерыва (длительность {break_duration_minutes:.1f} мин)")
+    save_history_event(chat_id, user_id, user.username, f"Вернулся с перерыва (длительность {break_duration_minutes:.1f} мин)")
 
 
 def save_history_event(chat_id: int, user_id: int, username: str, event_description: str):
@@ -135,38 +140,32 @@ def save_history_event(chat_id: int, user_id: int, username: str, event_descript
     user_history[chat_id].append(f"{now_str} | {username} ({user_id}) | {event_description}")
     logging.info(f"HISTORY [{chat_id}]: {username} - {event_description}")
 
-def generate_detailed_report(chat_id: int, data: dict) -> list:
+# ИЗМЕНЕНО: Функция теперь работает с объектами ShiftData и UserData
+def generate_detailed_report(chat_id: int, data: ShiftData) -> list:
     """Собирает текстовый отчет на основе данных о смене."""
-    main_id = data.get('main_id')
+    main_id = data.main_id
     if not main_id: return ["Ошибка: в смене нет главного ведущего."]
         
-    user_data = data.get('users', {}).get(str(main_id)) or data.get('users', {}).get(main_id)
+    user_data = data.users.get(main_id)
     if not user_data: return ["Ошибка: нет данных о ведущем."]
 
-    shift_start_str = data.get('shift_start')
-    if shift_start_str:
-        shift_start_dt = datetime.datetime.fromisoformat(shift_start_str)
-        report_date = shift_start_dt.strftime('%d.%m.%Y')
-    else:
-        report_date = datetime.datetime.now().strftime('%d.%m.%Y')
+    shift_start_dt = datetime.datetime.fromisoformat(data.shift_start)
+    report_date = shift_start_dt.strftime('%d.%m.%Y')
 
-    shift_goal = data.get('shift_goal', EXPECTED_VOICES_PER_SHIFT)
-    plan_percent = (user_data['count'] / shift_goal * 100) if shift_goal > 0 else 0
-    avg_delta = sum(user_data.get('voice_deltas', [])) / len(user_data['voice_deltas']) if user_data.get('voice_deltas') else 0
-    
-    max_pause = max(user_data.get('voice_deltas') or [0])
-    
-    avg_duration = sum(user_data.get('voice_durations', [])) / len(user_data['voice_durations']) if user_data.get('voice_durations') else 0
+    shift_goal = data.shift_goal
+    plan_percent = (user_data.count / shift_goal * 100) if shift_goal > 0 else 0
+    avg_delta = sum(user_data.voice_deltas) / len(user_data.voice_deltas) if user_data.voice_deltas else 0
+    max_pause = max(user_data.voice_deltas or [0])
+    avg_duration = sum(user_data.voice_durations) / len(user_data.voice_durations) if user_data.voice_durations else 0
 
     report_lines = [
-        # ИЗМЕНЕНО: Хэштег обновлен
         f"📋 **#ОтчетВедущего** ({report_date})",
-        f"🎤 **Ведущий:** {user_data.get('username', 'N/A')}",
+        f"🎤 **Ведущий:** {user_data.username}",
         "\n---",
         "**📊 Основная Статистика**",
-        f"**Голосовых:** {user_data.get('count', 0)} из {shift_goal} ({plan_percent:.0f}%)",
-        f"**Перерывов:** {user_data.get('breaks_count', 0)}",
-        f"**Опозданий:** {user_data.get('late_returns', 0)}",
+        f"**Голосовых:** {user_data.count} из {shift_goal} ({plan_percent:.0f}%)",
+        f"**Перерывов:** {user_data.breaks_count}",
+        f"**Опозданий:** {user_data.late_returns}",
         "\n---",
         "**📈 Аналитика Активности**",
         f"**Средний ритм:** {avg_delta:.1f} мин/ГС" if avg_delta else "**Средний ритм:** Н/Д",
@@ -174,19 +173,10 @@ def generate_detailed_report(chat_id: int, data: dict) -> list:
         f"**Ср. длина ГС:** {avg_duration:.1f} сек." if avg_duration else "**Ср. длина ГС:** Н/Д"
     ]
     
-    ad_counts = Counter(user_data.get('recognized_ads', []))
+    ad_counts = Counter(user_data.recognized_ads)
     if ad_counts:
         report_lines.append("\n---\n**📝 Анализ Контента**")
         for ad, count in ad_counts.items():
             report_lines.append(f"✔️ {ad} (x{count})")
             
     return report_lines
-
-def get_full_report_text(report_data: dict) -> str:
-    """Формирует красивый текстовый отчет из словаря данных. (В данный момент не используется)"""
-    lines = ["📋 Итоговый отчёт:\n"]
-    for key, value in report_data.items():
-        if isinstance(value, float):
-            value = f"{value:.2f}"
-        lines.append(f"• {key}: {value}")
-    return "\n".join(lines)
