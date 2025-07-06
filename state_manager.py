@@ -4,11 +4,19 @@ import logging
 import os
 import shutil
 import copy
+from dataclasses import asdict
 
-from state import data_lock # Импортируем наш замок
+from state import data_lock
 
 CHAT_DATA_FILE = 'data/chat_data.json'
 USER_HISTORY_FILE = 'data/user_history.json'
+
+# ДОБАВЛЕНО: Класс-кодировщик для правильного сохранения dataclasses в JSON
+class EnhancedJSONEncoder(json.JSONEncoder):
+    def default(self, o):
+        if hasattr(o, '__dataclass_fields__'):
+            return asdict(o)
+        return super().default(o)
 
 def save_state(bot, chat_data: dict, user_history: dict):
     """
@@ -18,7 +26,6 @@ def save_state(bot, chat_data: dict, user_history: dict):
     
     os.makedirs(os.path.dirname(CHAT_DATA_FILE), exist_ok=True)
     
-    # Используем блокировку, чтобы безопасно скопировать данные
     with data_lock:
         chat_data_copy = copy.deepcopy(chat_data)
         user_history_copy = copy.deepcopy(user_history)
@@ -36,8 +43,8 @@ def save_state(bot, chat_data: dict, user_history: dict):
 
             temp_filepath = filepath + ".tmp"
             with open(temp_filepath, 'w', encoding='utf-8') as f:
-                # Используем default=str для безопасной сериализации
-                json.dump(data_to_save, f, indent=4, ensure_ascii=False, default=str)
+                # ИЗМЕНЕНО: Используем наш кастомный кодировщик напрямую здесь
+                json.dump(data_to_save, f, indent=4, ensure_ascii=False, cls=EnhancedJSONEncoder)
             
             os.replace(temp_filepath, filepath)
 
@@ -52,7 +59,6 @@ def save_state(bot, chat_data: dict, user_history: dict):
                     shutil.move(backup_filepath, filepath)
                 except Exception as restore_e:
                     logging.error(f"Не удалось восстановить бэкап для {filepath}: {restore_e}")
-                    # Уведомляем администратора о проблеме
                     from config import BOSS_ID
                     if BOSS_ID:
                         try:
@@ -75,7 +81,12 @@ def load_state() -> (dict, dict):
         if os.path.exists(filepath):
             try:
                 with open(filepath, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
+                    # Проверяем, не пустой ли файл
+                    content = f.read()
+                    if not content:
+                        logging.warning(f"Файл состояния {filepath} пустой.")
+                        return {}
+                    data = json.loads(content)
                     return {int(k): v for k, v in data.items()}
             except (json.JSONDecodeError, TypeError) as e:
                 logging.error(f"Ошибка парсинга {filepath}: {e}. Попробуйте проверить файл вручную.")
