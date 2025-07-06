@@ -7,7 +7,7 @@ from dataclasses import asdict
 
 # === Импорты из внутренних модулей ===
 from config import BOT_TOKEN, CHAT_CONFIG_FILE, AD_TEMPLATES_FILE
-from state import chat_configs, ad_templates, chat_data, user_history, data_lock # ДОБАВЛЕНО: data_lock
+from state import chat_configs, ad_templates, chat_data, user_history, data_lock
 from utils import load_json_data
 from handlers import register_handlers
 from scheduler import run_scheduler
@@ -24,16 +24,9 @@ logging.basicConfig(
     ]
 )
 
-# === Кастомный JSON-энкодер для сохранения dataclasses ===
-class EnhancedJSONEncoder(json.JSONEncoder):
-    def default(self, o):
-        if hasattr(o, '__dataclass_fields__'):
-            return asdict(o)
-        return super().default(o)
-
 # === Инициализация бота ===
-# ИЗМЕНЕНО: Передаем наш кастомный энкодер для сериализации dataclasses в файлы
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown", json_encoder=EnhancedJSONEncoder)
+# ИЗМЕНЕНО: Убран аргумент json_encoder, чтобы обеспечить совместимость
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
 
 # === Загрузка всех данных при старте ===
 def load_all_data():
@@ -46,7 +39,6 @@ def load_all_data():
     ad_templates.update(load_json_data(AD_TEMPLATES_FILE, {}))
     logging.info(f"Загружено {len(chat_configs)} конфигураций чатов.")
 
-    # Загружаем состояние и конвертируем словари в dataclasses
     loaded_chat_data_raw, loaded_user_history_raw = load_state()
     
     temp_chat_data = {}
@@ -59,7 +51,6 @@ def load_all_data():
             logging.error(f"Ошибка при конвертации данных для чата {chat_id}: {e}. Пропускаем...")
             continue
     
-    # Потокобезопасно обновляем глобальные переменные
     with data_lock:
         chat_data.clear()
         chat_data.update(temp_chat_data)
