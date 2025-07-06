@@ -2,75 +2,83 @@
 import json
 import logging
 import os
-import shutil # Библиотека для операций с файлами
+import shutil
+import copy
 
-# Пути к файлам, где будут храниться данные.
+from state import data_lock # Импортируем наш замок
+
 CHAT_DATA_FILE = 'data/chat_data.json'
 USER_HISTORY_FILE = 'data/user_history.json'
 
-def save_state(chat_data: dict, user_history: dict):
+def save_state(bot, chat_data: dict, user_history: dict):
     """
-    Сохраняет текущее состояние chat_data и user_history в JSON-файлы.
-    ИЗМЕНЕНО: Добавлено резервное копирование перед сохранением.
+    Потокобезопасно сохраняет текущее состояние в JSON-файлы.
     """
     logging.info("Начинаю сохранение состояния бота...")
     
     os.makedirs(os.path.dirname(CHAT_DATA_FILE), exist_ok=True)
     
+    # Используем блокировку, чтобы безопасно скопировать данные
+    with data_lock:
+        chat_data_copy = copy.deepcopy(chat_data)
+        user_history_copy = copy.deepcopy(user_history)
+        
     states_to_save = {
-        'chat_data': (chat_data, CHAT_DATA_FILE),
-        'user_history': (user_history, USER_HISTORY_FILE)
+        'chat_data': (chat_data_copy, CHAT_DATA_FILE),
+        'user_history': (user_history_copy, USER_HISTORY_FILE)
     }
     
     for state_name, (data_to_save, filepath) in states_to_save.items():
         backup_filepath = filepath + ".bak"
         try:
-            # 1. Если основной файл существует, создаем бэкап
             if os.path.exists(filepath):
                 shutil.copyfile(filepath, backup_filepath)
 
-            # 2. Пишем данные во временный файл
             temp_filepath = filepath + ".tmp"
             with open(temp_filepath, 'w', encoding='utf-8') as f:
-                # Используем default=str для безопасной сериализации объектов, которые могут быть не JSON-совместимы
+                # Используем default=str для безопасной сериализации
                 json.dump(data_to_save, f, indent=4, ensure_ascii=False, default=str)
             
-            # 3. Атомарно переименовываем временный файл в основной
             os.replace(temp_filepath, filepath)
 
-            # 4. Если все прошло успешно, удаляем бэкап
             if os.path.exists(backup_filepath):
                 os.remove(backup_filepath)
 
         except Exception as e:
             logging.error(f"Критическая ошибка при сохранении файла {filepath}: {e}", exc_info=True)
-            # Если произошла ошибка, пытаемся восстановить из бэкапа
             if os.path.exists(backup_filepath):
-                logging.info(f"Восстановление файла {filepath} из бэкапа {backup_filepath}...")
-                shutil.move(backup_filepath, filepath)
+                logging.info(f"Восстановление файла {filepath} из бэкапа...")
+                try:
+                    shutil.move(backup_filepath, filepath)
+                except Exception as restore_e:
+                    logging.error(f"Не удалось восстановить бэкап для {filepath}: {restore_e}")
+                    # Уведомляем администратора о проблеме
+                    from config import BOSS_ID
+                    if BOSS_ID:
+                        try:
+                            bot.send_message(BOSS_ID, f"🚨 **Критическая ошибка!**\nНе удалось сохранить и восстановить состояние `{state_name}`. Проверьте логи и дисковое пространство!")
+                        except Exception as send_e:
+                            logging.error(f"Не удалось отправить уведомление BOSS_ID: {send_e}")
 
 def load_state() -> (dict, dict):
     """
-    Загружает состояние chat_data и user_history из JSON-файлов.
-    ИЗМЕНЕНО: Более устойчивая загрузка с попыткой восстановления из бэкапа.
+    Загружает состояние из JSON-файлов, с попыткой восстановления из бэкапа.
     """
     logging.info("Загрузка состояния бота...")
     
     def _load_single_file(filepath):
-        """Вспомогательная функция для загрузки одного файла."""
         backup_filepath = filepath + ".bak"
         if not os.path.exists(filepath) and os.path.exists(backup_filepath):
-            logging.warning(f"Основной файл состояния {filepath} не найден, но найден бэкап. Восстанавливаем из бэкапа.")
+            logging.warning(f"Основной файл {filepath} не найден, восстанавливаем из бэкапа.")
             shutil.copyfile(backup_filepath, filepath)
 
         if os.path.exists(filepath):
             try:
                 with open(filepath, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    # Конвертируем ключи словарей в int, так как chat_id - это число
                     return {int(k): v for k, v in data.items()}
             except (json.JSONDecodeError, TypeError) as e:
-                logging.error(f"Ошибка парсинга файла {filepath}: {e}. Попробуйте проверить его вручную.")
+                logging.error(f"Ошибка парсинга {filepath}: {e}. Попробуйте проверить файл вручную.")
                 return {}
         return {}
 
