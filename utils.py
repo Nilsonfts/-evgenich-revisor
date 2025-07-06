@@ -15,15 +15,7 @@ from state import chat_data, user_history
 # ИМПОРТИРУЕМ НАШИ НОВЫЕ МОДЕЛИ
 from models import UserData, ShiftData
 
-def load_json_data(filepath, default_value={}):
-    """Загружает данные из JSON файла."""
-    try:
-        if os.path.exists(filepath):
-            with open(filepath, 'r', encoding='utf-8') as f:
-                return json.load(f)
-    except Exception as e:
-        logging.error(f"Ошибка загрузки файла {filepath}: {e}")
-    return default_value
+ load_json_data
 
 def save_json_data(filepath, data):
     """Сохраняет данные в JSON файл."""
