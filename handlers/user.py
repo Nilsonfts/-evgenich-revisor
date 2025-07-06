@@ -4,6 +4,7 @@ import random
 import datetime
 import pandas as pd
 from collections import Counter
+from telebot import types
 
 from utils import get_username
 from state import chat_data
