@@ -79,3 +79,9 @@ def get_role_description(role: str) -> str:
 def is_weekend_shift() -> bool:
     """Проверяет, является ли текущий день выходным (пт-сб)"""
     return get_current_day_type() == DayType.WEEKEND
+
+def get_available_roles_for_day(day_of_week: int):
+    """Возвращает список доступных ролей для дня недели (0=Пн, 6=Вс)."""
+    if day_of_week in [4, 5]:  # Пятница, Суббота
+        return [UserRole.KARAOKE_HOST.value, UserRole.MC.value]
+    return [UserRole.KARAOKE_HOST.value]
