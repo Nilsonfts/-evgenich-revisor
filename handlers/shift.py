@@ -20,25 +20,25 @@ from database import db
 
 def register_shift_handlers(bot):
 
+    @bot.message_handler(commands=['startmc', 'стартmc'])
+    def handle_startmc(message: types.Message):
+        # Просто вызываем основной обработчик /start с аргументом МС
+        message.text = '/start МС'
+        handle_start(message)
+
     @bot.message_handler(commands=['start', 'старт'])
     def handle_start(message: types.Message):
         chat_id = message.chat.id
-        if chat_id > 0: 
-            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('group_only_command', ["Эта команда работает только в групповом чате."]))
-            return bot.reply_to(message, phrase)
-            
         from_user = message.from_user
         username = get_username(from_user)
-        
-        # Парсим роль из аргументов команды
         args = message.text.split()[1:] if len(message.text.split()) > 1 else []
         requested_role = None
-        
+        # Распознаем аргументы роли
         if args:
-            role_arg = " ".join(args).lower()
-            if "караоке" in role_arg or "karaoke" in role_arg:
+            role_arg = " ".join(args).lower().replace(' ', '')
+            if role_arg in ["караоке", "karaoke"]:
                 requested_role = UserRole.KARAOKE_HOST.value
-            elif "мс" in role_arg or "mc" in role_arg:
+            elif role_arg in ["мс", "mc", "startmc"]:
                 requested_role = UserRole.MC.value
         
         # Определяем доступные роли для текущего дня
