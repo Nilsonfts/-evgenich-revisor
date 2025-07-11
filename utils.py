@@ -33,6 +33,16 @@ def load_json_data(filepath, default_value=None):  # noqa: B006
         logging.error(f"Ошибка загрузки файла {filepath}: {e}")
     return default_value
 
+def save_json_data(filename, data):
+    """Сохраняет словарь data в JSON-файл. Возвращает True при успехе, иначе False."""
+    try:
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        logging.error(f"Ошибка сохранения {filename}: {e}")
+        return False
+
 def is_admin(bot, user_id: int, chat_id: int) -> bool:
     """Проверяет, является ли пользователь админом чата."""
     if user_id == BOSS_ID:
