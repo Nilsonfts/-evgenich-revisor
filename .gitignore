@@ -1,18 +1,81 @@
-# Игнорировать Google credentials
-credentials.json
-
-# Кэш и временные файлы Python
+# Python
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
 *.pyo
 *.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# IDE файлы
+# Виртуальное окружение
+venv/
+env/
+ENV/
+
+# IDE
 .vscode/
 .idea/
+*.swp
+*.swo
 
-# MacOS
+# Конфигурация (может содержать токены)
+config_local.py
+.env
+
+# База данных
+*.db
+*.sqlite
+*.sqlite3
+data/*.db
+
+# Логи
+*.log
+logs/
+data/*.log
+
+# Временные файлы разработки
+*_OLD.py
+*_NEW.py
+*_BACKUP.*
+*_old.*
+*_new.*
+*.tmp
+*.bak
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Google Sheets credentials
+credentials.json
+token.json
+
+# Backup files
+backup_*
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
 
 # Папка с данными состояния
 data/
