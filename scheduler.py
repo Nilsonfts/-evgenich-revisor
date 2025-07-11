@@ -15,6 +15,7 @@ from utils import get_chat_title, generate_detailed_report, init_shift_data
 from g_sheets import append_shift_to_google_sheet
 from state_manager import save_state
 from models import UserData
+from database import db  # Импортируем базу данных
 
 # --- Аналитические функции ---
 
@@ -178,12 +179,29 @@ def check_for_shift_end(bot):
         except Exception as e:
             logging.error(f"Ошибка в check_for_shift_end для чата {chat_id_str}: {e}", exc_info=True)
 
+def database_cleanup_task():
+    """Задача очистки старых данных из базы."""
+    try:
+        logging.info("Запуск задачи очистки базы данных...")
+        db.cleanup_old_data(days_old=30)  # Удаляем данные старше 30 дней
+        logging.info("Очистка базы данных завершена успешно")
+    except Exception as e:
+        logging.error(f"Ошибка при очистке базы данных: {e}")
+
+def schedule_database_cleanup():
+    """Планирует ежедневную очистку базы данных в 03:00."""
+    schedule.every().day.at("03:00").do(database_cleanup_task)
+    logging.info("Запланирована ежедневная очистка базы данных в 03:00")
+
 def run_scheduler(bot):
     """Основной цикл планировщика, который запускает фоновые проверки."""
     schedule.every(1).minutes.do(check_for_shift_end, bot=bot)
     schedule.every(1).minutes.do(check_user_activity, bot=bot)
     # ИЗМЕНЕНО: Передаем bot в функцию сохранения, чтобы она могла уведомить об ошибке
     schedule.every(5).minutes.do(save_state, bot=bot, chat_data=chat_data, user_history=user_history)
+    
+    # Планируем очистку базы данных
+    schedule_database_cleanup()
     
     logging.info("Планировщик настроен и запущен. Автосохранение активно.")
     while True:

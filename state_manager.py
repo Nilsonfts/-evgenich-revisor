@@ -7,6 +7,7 @@ import copy
 from dataclasses import asdict
 
 from state import data_lock
+from database import db  # Импортируем базу данных
 
 CHAT_DATA_FILE = 'data/chat_data.json'
 USER_HISTORY_FILE = 'data/user_history.json'
@@ -20,7 +21,7 @@ class EnhancedJSONEncoder(json.JSONEncoder):
 
 def save_state(bot, chat_data: dict, user_history: dict):
     """
-    Потокобезопасно сохраняет текущее состояние в JSON-файлы.
+    Потокобезопасно сохраняет текущее состояние в JSON-файлы и базу данных.
     """
     logging.info("Начинаю сохранение состояния бота...")
     
@@ -29,7 +30,17 @@ def save_state(bot, chat_data: dict, user_history: dict):
     with data_lock:
         chat_data_copy = copy.deepcopy(chat_data)
         user_history_copy = copy.deepcopy(user_history)
-        
+    
+    # Сохраняем в базу данных
+    try:
+        for chat_id, shift_data in chat_data_copy.items():
+            if shift_data and hasattr(shift_data, 'main_id'):
+                db.save_shift_data(chat_id, shift_data)
+        logging.info("Состояние успешно сохранено в базу данных")
+    except Exception as e:
+        logging.error(f"Ошибка сохранения в базу данных: {e}")
+    
+    # Сохраняем в JSON файлы (для совместимости)
     states_to_save = {
         'chat_data': (chat_data_copy, CHAT_DATA_FILE),
         'user_history': (user_history_copy, USER_HISTORY_FILE)
@@ -66,7 +77,7 @@ def save_state(bot, chat_data: dict, user_history: dict):
                         except Exception as send_e:
                             logging.error(f"Не удалось отправить уведомление BOSS_ID: {send_e}")
 
-def load_state() -> (dict, dict):
+def load_state() -> tuple[dict, dict]:
     """
     Загружает состояние из JSON-файлов, с попыткой восстановления из бэкапа.
     """

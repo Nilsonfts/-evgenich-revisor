@@ -4,6 +4,8 @@ import logging
 import os
 import datetime
 import pandas as pd
+import random
+import time
 from telebot import types
 
 from utils import admin_required, save_json_data, generate_detailed_report, get_username, get_chat_title
@@ -12,8 +14,69 @@ from config import CHAT_CONFIG_FILE, VOICE_TIMEOUT_MINUTES, BOSS_ID, TIMEZONE_MA
 from g_sheets import get_sheet
 from scheduler import send_end_of_shift_report_for_chat
 from phrases import soviet_phrases
+from database import db  # Импортируем базу данных
 
 def register_admin_handlers(bot):
+    @bot.message_handler(commands=['bot_off', 'выключить'])
+    @admin_required(bot)
+    def handle_bot_disable(message: types.Message):
+        """Выключает бота для текущего чата."""
+        chat_id = message.chat.id
+        admin_id = message.from_user.id
+        admin_username = get_username(message.from_user)
+        
+        # Выключаем бота в базе данных
+        db.set_bot_enabled(chat_id, False, admin_id)
+        
+        # Сохраняем событие
+        db.save_event(chat_id, admin_id, admin_username, "bot_disabled", "Бот выключен администратором")
+        
+        bot.send_message(chat_id, 
+            f"🔴 **Бот выключен администратором {admin_username}**\n\n"
+            "Для включения используйте команду `/bot_on` или `/включить`",
+            parse_mode="Markdown")
+        
+        logging.info(f"Бот выключен в чате {chat_id} администратором {admin_username} (ID: {admin_id})")
+
+    @bot.message_handler(commands=['bot_on', 'включить'])
+    @admin_required(bot)
+    def handle_bot_enable(message: types.Message):
+        """Включает бота для текущего чата."""
+        chat_id = message.chat.id
+        admin_id = message.from_user.id
+        admin_username = get_username(message.from_user)
+        
+        # Включаем бота в базе данных
+        db.set_bot_enabled(chat_id, True, admin_id)
+        
+        # Сохраняем событие
+        db.save_event(chat_id, admin_id, admin_username, "bot_enabled", "Бот включен администратором")
+        
+        bot.send_message(chat_id, 
+            f"🟢 **Бот включен администратором {admin_username}**\n\n"
+            "Бот снова обрабатывает команды и сообщения.",
+            parse_mode="Markdown")
+        
+        logging.info(f"Бот включен в чате {chat_id} администратором {admin_username} (ID: {admin_id})")
+
+    @bot.message_handler(commands=['bot_status'])
+    @admin_required(bot)
+    def handle_bot_status_check(message: types.Message):
+        """Показывает статус работы бота."""
+        chat_id = message.chat.id
+        is_enabled = db.is_bot_enabled(chat_id)
+        
+        status_icon = "🟢" if is_enabled else "🔴"
+        status_text = "включен" if is_enabled else "выключен"
+        
+        bot.reply_to(message, 
+            f"{status_icon} **Статус бота:** {status_text}\n\n"
+            f"Команды управления:\n"
+            f"• `/bot_off` или `/выключить` — выключить бота\n"
+            f"• `/bot_on` или `/включить` — включить бота\n"
+            f"• `/bot_status` — проверить статус",
+            parse_mode="Markdown")
+
     @bot.message_handler(commands=['admin'])
     @admin_required(bot)
     def handle_admin_panel(message: types.Message):
@@ -29,6 +92,11 @@ def register_admin_handlers(bot):
             "`/log` — 📜 Выгрузить лог смены",
             "`/time` — ⏱️ Изменить тайм-аут активности",
             "`/setup_wizard` — 🧙‍♂️ Мастер настройки чата",
+            "",
+            "**🤖 УПРАВЛЕНИЕ БОТОМ:**",
+            "`/bot_status` — Статус работы бота",
+            "`/bot_off` или `/выключить` — Выключить бота",
+            "`/bot_on` или `/включить` — Включить бота",
         ]
         if user_id == BOSS_ID:
              panel_text.append("`/broadcast` — 📢 Рассылка (BOSS)")

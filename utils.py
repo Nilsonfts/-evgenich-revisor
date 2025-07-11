@@ -14,6 +14,7 @@ from config import BOSS_ID, BREAK_DURATION_MINUTES, EXPECTED_VOICES_PER_SHIFT, s
 from state import chat_data, user_history
 # ИМПОРТИРУЕМ НАШИ НОВЫЕ МОДЕЛИ
 from models import UserData, ShiftData
+from database import db  # Импортируем базу данных
 
 def load_json_data(filepath, default_value=None):  # noqa: B006
     """Загружает данные из JSON файла.
@@ -66,10 +67,10 @@ def get_chat_title(bot, chat_id: int) -> str:
     except Exception:
         return str(chat_id)
 
-# ИЗМЕНЕНО: Функция теперь возвращает объект класса UserData
-def init_user_data(user_id: int, username: str) -> UserData:
-    """Создает пустую структуру данных для нового пользователя."""
-    return UserData(user_id=user_id, username=username)
+# ИЗМЕНЕНО: Функция теперь возвращает объект класса UserData с поддержкой ролей
+def init_user_data(user_id: int, username: str, role: str = "караоке_ведущий") -> UserData:
+    """Создает пустую структуру данных для нового пользователя с указанной ролью."""
+    return UserData(user_id=user_id, username=username, role=role)
 
 # ИЗМЕНЕНО: Функция теперь работает с объектами ShiftData
 def init_shift_data(chat_id: int):
@@ -130,12 +131,67 @@ def handle_user_return(bot, chat_id: int, user_id: int):
 
 
 def save_history_event(chat_id: int, user_id: int, username: str, event_description: str):
-    """Сохраняет событие в лог истории смены."""
+    """Сохраняет событие в историю (JSON + база данных)."""
+    timestamp = datetime.datetime.now(pytz.timezone('Europe/Moscow')).isoformat()
+    
+    # Сохраняем в память (для совместимости)
     if chat_id not in user_history:
         user_history[chat_id] = []
-    now_str = datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')
-    user_history[chat_id].append(f"{now_str} | {username} ({user_id}) | {event_description}")
-    logging.info(f"HISTORY [{chat_id}]: {username} - {event_description}")
+    
+    event = {
+        "user_id": user_id,
+        "username": username,
+        "timestamp": timestamp,
+        "event": event_description
+    }
+    user_history[chat_id].append(event)
+    
+    # Сохраняем в базу данных
+    try:
+        db.save_event(chat_id, user_id, username, "shift_event", event_description)
+    except Exception as e:
+        logging.error(f"Ошибка сохранения события в БД: {e}")
+
+def save_voice_statistics(chat_id: int, user_id: int, username: str, duration: float, recognized_ad: str = ""):
+    """Сохраняет статистику голосового сообщения в базу данных."""
+    try:
+        db.save_voice_stat(chat_id, user_id, username, duration, recognized_ad)
+    except Exception as e:
+        logging.error(f"Ошибка сохранения статистики голосового в БД: {e}")
+
+def get_user_stats_from_database(user_id: int) -> dict:
+    """Получает статистику пользователя из базы данных."""
+    try:
+        return db.get_user_stats_from_db(user_id)
+    except Exception as e:
+        logging.error(f"Ошибка получения статистики пользователя из БД: {e}")
+        return {'shifts_count': 0, 'total_voices': 0, 'total_breaks': 0, 'total_lates': 0}
+
+def enhanced_user_stats_report(user_id: int, username: str) -> str:
+    """Создает расширенный отчет статистики пользователя."""
+    # Получаем данные из базы
+    db_stats = get_user_stats_from_database(user_id)
+    
+    report_lines = [
+        f"📊 **Расширенная статистика для {username}**\n",
+        f"🏢 **Из локальной базы данных:**",
+        f"👑 Смен отработано: {db_stats['shifts_count']}",
+        f"🗣️ Голосовых записано: {db_stats['total_voices']}",
+        f"☕ Перерывов взято: {db_stats['total_breaks']}",
+        f"⏳ Опозданий с перерыва: {db_stats['total_lates']}"
+    ]
+    
+    # Вычисляем средние показатели
+    if db_stats['shifts_count'] > 0:
+        avg_voices = db_stats['total_voices'] / db_stats['shifts_count']
+        avg_breaks = db_stats['total_breaks'] / db_stats['shifts_count']
+        report_lines.extend([
+            f"\n📈 **Средние показатели:**",
+            f"🎯 Голосовых за смену: {avg_voices:.1f}",
+            f"☕ Перерывов за смену: {avg_breaks:.1f}"
+        ])
+    
+    return "\n".join(report_lines)
 
 # ИЗМЕНЕНО: Функция теперь работает с объектами ShiftData и UserData
 def generate_detailed_report(chat_id: int, data: ShiftData) -> list:

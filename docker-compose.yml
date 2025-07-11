@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  karaoke-revisor:
+    build: .
+    container_name: karaoke-revisor-bot
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./config.py:/app/config.py
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3; conn=sqlite3.connect('data/bot_database.db'); conn.close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+  # Опциональный nginx для webhook (если понадобится)
+  # nginx:
+  #   image: nginx:alpine
+  #   container_name: karaoke-revisor-nginx
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/nginx.conf
+  #   depends_on:
+  #     - karaoke-revisor
+  #   restart: unless-stopped
+
+volumes:
+  bot_data:
+    driver: local

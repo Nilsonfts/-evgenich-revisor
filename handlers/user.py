@@ -2,11 +2,13 @@
 
 import random
 import datetime
+import pytz
+import logging
 import pandas as pd
 from collections import Counter
 from telebot import types
 
-from utils import get_username
+from utils import get_username, is_admin
 from state import chat_data
 from g_sheets import get_sheet
 from phrases import soviet_phrases
@@ -89,19 +91,27 @@ def register_user_handlers(bot):
             phrase = random.choice(soviet_phrases.get("system_messages", {}).get('generic_error', ["Произошла ошибка при выполнении команды."]))
             bot.send_message(message.chat.id, phrase)
 
-    @bot.message_handler(commands=['help'])
+    @bot.message_handler(commands=['help', 'помощь'])
     def handle_help(message: types.Message):
-        help_text_lines = [
-            "📘 **Основные команды для ведущего:**\n",
-            "`/start` или `/старт`",
-            "Занять смену, если она свободна.\n",
-            "`/промежуточный` или `/check`",
-            "Показать свой личный отчет по текущей смене.\n",
-            "`/сводка`",
-            "Посмотреть свою общую статистику за все время.\n",
-            "`/передать`",
-            "Передать смену другому (нужно ответить на его сообщение).\n",
-            "☕️ Для перерыва просто напишите в чат `перерыв`, `обед` или `отдых`.",
-            "✅ Для возвращения — `вернулся`, `на месте`."
-        ]
-        bot.reply_to(message, "\n".join(help_text_lines), parse_mode="Markdown")
+        """Обработчик команды помощи."""
+        from help_system import get_help_text
+        help_text = get_help_text()
+        bot.send_message(message.chat.id, help_text, parse_mode='Markdown')
+    
+    @bot.message_handler(commands=['helpadmin', 'админпомощь'])
+    def handle_admin_help(message: types.Message):
+        """Обработчик команды помощи для админов."""
+        from utils import is_admin
+        if not is_admin(bot, message.chat.id, message.from_user.id):
+            return bot.reply_to(message, "❌ Эта команда доступна только администраторам.")
+        
+        from help_system import get_admin_help_text
+        help_text = get_admin_help_text()
+        bot.send_message(message.chat.id, help_text, parse_mode='Markdown')
+    
+    @bot.message_handler(commands=['роли', 'roles'])
+    def handle_roles_info(message: types.Message):
+        """Обработчик команды информации о ролях."""
+        from help_system import get_roles_help_text
+        roles_text = get_roles_help_text()
+        bot.send_message(message.chat.id, roles_text, parse_mode='Markdown')

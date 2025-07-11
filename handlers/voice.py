@@ -8,7 +8,7 @@ import random
 import threading
 from telebot import types
 
-from utils import get_username, init_shift_data, init_user_data, save_history_event
+from utils import get_username, init_shift_data, init_user_data, save_history_event, save_voice_statistics
 from state import chat_data, ad_templates, chat_configs, data_lock # ДОБАВЛЕНО: data_lock
 from config import VOICE_MIN_DURATION_SECONDS, VOICE_COOLDOWN_SECONDS, OPENAI_API_KEY, BOSS_ID
 from phrases import soviet_phrases
@@ -73,14 +73,14 @@ def analyze_voice_thread(bot, audio_path: str, user_data: UserData, chat_id: int
             os.remove(audio_path)
 
 def register_voice_handlers(bot):
-
     @bot.message_handler(content_types=['voice'])
-    def handle_voice_message(message: types.Message):
+    def handle_voice(message: types.Message):
         chat_id = message.chat.id
-        if chat_id > 0: return
-
-        user_id = message.from_user.id
-        username = get_username(message.from_user)
+        if chat_id > 0: return  # Игнорируем приватные сообщения
+        
+        from_user = message.from_user
+        user_id = from_user.id
+        username = get_username(from_user)
         now_moscow = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
 
         # Используем 'with data_lock' для всех операций с общими данными
@@ -132,6 +132,11 @@ def register_voice_handlers(bot):
 
                 # Копируем объект user_data, чтобы передать его в поток
                 user_data_copy_for_thread = user_data
+
+                voice_duration = message.voice.duration
+                
+                # Сохраняем статистику голосового в базу данных
+                save_voice_statistics(chat_id, user_id, username, voice_duration)
 
         # Запускаем анализ голоса вне блокировки
         if client and 'user_data_copy_for_thread' in locals():

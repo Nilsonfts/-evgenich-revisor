@@ -1,4 +1,5 @@
 # handlers.py
+import telebot
 import logging
 import os
 import datetime
@@ -21,6 +22,7 @@ from utils import (
 )
 from scheduler import send_end_of_shift_report_for_chat
 from models import UserData # Импортируем нашу модель
+from database import db  # Импортируем базу данных
 
 try:
     import openai
@@ -32,6 +34,19 @@ pending_transfers = {}
 
 def register_handlers(bot):
     """Регистрирует все обработчики сообщений и колбэков для бота."""
+    
+    # Middleware для проверки состояния бота
+    @bot.middleware_handler(update_types=['message'])
+    def check_bot_enabled(bot_instance, message):
+        """Проверяет, включен ли бот для данного чата."""
+        # Исключаем команды управления ботом и приватные чаты
+        if (message.chat.id > 0 or 
+            (message.text and any(cmd in message.text for cmd in ['/bot_on', '/включить', '/bot_status', '/admin']))):
+            return
+        
+        if not db.is_bot_enabled(message.chat.id):
+            # Бот выключен, игнорируем сообщение
+            return False
 
     def analyze_voice_thread(audio_path: str, user_data: UserData, chat_id: int):
         """Анализирует аудио в отдельном потоке, чтобы не блокировать бота."""
@@ -198,42 +213,7 @@ def register_handlers(bot):
             except Exception as e:
                 logging.warning(f"Не удалось отменить передачу смены (сообщение могло быть удалено): {e}")
 
-    @bot.message_handler(commands=['передать'])
-    def handle_shift_transfer_request(message: types.Message):
-        chat_id = message.chat.id
-        from_user = message.from_user
-        shift = chat_data.get(chat_id)
-        
-        if not shift or shift.main_id != from_user.id:
-            return bot.reply_to(message, "Только текущий главный на смене может передать ее.")
-
-        if not message.reply_to_message:
-            return bot.reply_to(message, "Чтобы передать смену, ответьте этой командой на любое сообщение пользователя, которому вы хотите ее передать.")
-
-        to_user = message.reply_to_message.from_user
-        if to_user.is_bot: return bot.reply_to(message, "Нельзя передать смену боту.")
-        if to_user.id == from_user.id: return bot.reply_to(message, "Нельзя передать смену самому себе.")
-        if chat_id in pending_transfers: return bot.reply_to(message, "В данный момент уже есть активное предложение о передаче смены. Дождитесь его завершения.")
-
-        from_username = get_username(from_user)
-        to_username = get_username(to_user)
-
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("✅ Принять смену", callback_data=f"transfer_accept_{to_user.id}"))
-        
-        phrase_template = random.choice(soviet_phrases.get("system_messages", {}).get('shift_transfer_offer', ["."]))
-        text = phrase_template.format(from_username=from_username, to_username=to_username)
-        
-        sent_message = bot.send_message(chat_id, text, reply_markup=markup)
-        
-        timer = threading.Timer(300, cancel_transfer, args=[chat_id])
-        timer.start()
-        
-        pending_transfers[chat_id] = {
-            'from_id': from_user.id, 'from_username': from_username,
-            'to_id': to_user.id, 'to_username': to_username,
-            'message_id': sent_message.message_id, 'timer': timer
-        }
+    # Обработчик /передать перенесен в handlers/shift.py для избежания дублирования
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith('transfer_accept_'))
     def handle_shift_transfer_accept(call: types.CallbackQuery):
@@ -268,64 +248,9 @@ def register_handlers(bot):
         bot.send_message(chat_id, text)
         save_history_event(chat_id, user_id, transfer_info['to_username'], f"Принял смену от {transfer_info['from_username']}")
 
-    @bot.message_handler(commands=['start', 'старт'])
-    def handle_start(message: types.Message):
-        chat_id = message.chat.id
-        if chat_id > 0: 
-            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('group_only_command', ["Эта команда работает только в групповом чате."]))
-            return bot.reply_to(message, phrase)
-            
-        from_user = message.from_user
-        username = get_username(from_user)
-        
-        if chat_id not in chat_data: init_shift_data(chat_id)
-        
-        shift = chat_data[chat_id]
-        if from_user.id not in shift.users:
-            shift.users[from_user.id] = init_user_data(from_user.id, username)
-            
-        if shift.main_id is not None:
-            main_username = shift.main_username
-            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('start_shift_fail_taken', ["Смена уже занята. Текущий главный: {main_username}."]))
-            return bot.reply_to(message, phrase.format(main_username=main_username))
-            
-        shift.main_id = from_user.id
-        shift.main_username = username
-        
-        phrase = random.choice(soviet_phrases.get("system_messages", {}).get('start_shift_success', ["👑 {username}, вы заступили на смену! Удачи!"]))
-        bot.send_message(chat_id, phrase.format(username=username))
-        save_history_event(chat_id, from_user.id, username, "Стал главным на смене (команда /start)")
+    # Обработчик /start перенесен в handlers/shift.py для избежания дублирования
 
-    @bot.message_handler(commands=['промежуточный', 'check'])
-    def handle_check(message: types.Message):
-        chat_id = message.chat.id
-        user_id = message.from_user.id
-        shift = chat_data.get(chat_id)
-        
-        if not shift or not shift.main_id:
-            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('shift_not_started', ["Смена в этом чате еще не началась."]))
-            return bot.reply_to(message, phrase)
-            
-        if user_id != shift.main_id:
-            main_username = shift.main_username
-            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('only_for_main_user', ["Эту команду может использовать только текущий главный на смене: {main_username}."]))
-            return bot.reply_to(message, phrase.format(main_username=main_username))
-            
-        main_user_data = shift.users[shift.main_id]
-        shift_goal = shift.shift_goal
-        plan_percent = (main_user_data.count / shift_goal * 100) if shift_goal > 0 else 0
-        report_lines = [
-            f"📋 *Промежуточный отчет для вас* ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})",
-            f"🗣️ **Голосовых:** {main_user_data.count} из {shift_goal} ({plan_percent:.0f}%)",
-            f"☕ **Перерывов:** {main_user_data.breaks_count}",
-            f"⏳ **Опозданий с перерыва:** {main_user_data.late_returns}"
-        ]
-        ad_counts = Counter(main_user_data.recognized_ads)
-        if ad_counts:
-            report_lines.append("\n**📝 Анализ контента:**")
-            for ad, count in ad_counts.items():
-                report_lines.append(f"✔️ {ad} (x{count})")
-        bot.reply_to(message, "\n".join(report_lines), parse_mode="Markdown")
+    # Обработчик /промежуточный перенесен в handlers/user.py для избежания дублирования
 
     @bot.message_handler(commands=['сводка'])
     def my_total_stats(message: types.Message):

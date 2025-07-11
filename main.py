@@ -9,7 +9,10 @@ from dataclasses import asdict
 from config import BOT_TOKEN, CHAT_CONFIG_FILE, AD_TEMPLATES_FILE
 from state import chat_configs, ad_templates, chat_data, user_history, data_lock
 from utils import load_json_data
-from handlers import register_handlers
+from handlers import register_handlers as register_main_handlers
+import handlers
+from admin_panel import register_admin_panel_handlers
+from help_system import register_help_handlers
 from scheduler import run_scheduler
 from state_manager import load_state
 from models import ShiftData, UserData
@@ -69,7 +72,10 @@ def start_background_tasks():
 # === Точка входа ===
 if __name__ == "__main__":
     load_all_data()
-    register_handlers(bot)
+    register_main_handlers(bot)  # Регистрируем основные обработчики
+    handlers.register_handlers(bot)  # Регистрируем модульные обработчики
+    register_admin_panel_handlers(bot)  # Регистрируем админ-панель
+    register_help_handlers(bot)  # Регистрируем систему помощи
     start_background_tasks()
     
     logging.info("Бот запущен и готов к работе.")
