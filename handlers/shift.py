@@ -19,6 +19,15 @@ from roles import (
 from database import db
 
 def register_shift_handlers(bot):
+    from utils import admin_required
+
+    @bot.message_handler(commands=['restart'])
+    @admin_required(bot)
+    def handle_restart(message: types.Message):
+        chat_id = message.chat.id
+        init_shift_data(chat_id)
+        bot.send_message(chat_id, "🔄 Смена успешно сброшена администратором!")
+        logging.info(f"Смена сброшена в чате {chat_id} админом {message.from_user.id}")
 
     @bot.message_handler(commands=['startmc', 'стартmc'])
     def handle_startmc(message: types.Message):
