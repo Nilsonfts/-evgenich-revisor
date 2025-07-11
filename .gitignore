@@ -3,8 +3,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
-*.pyo
-*.pyd
 .Python
 build/
 develop-eggs/
@@ -25,57 +23,91 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# Виртуальное окружение
-venv/
-env/
-ENV/
+# PyInstaller
+*.manifest
+*.spec
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
 
-# Конфигурация (может содержать токены)
-config_local.py
+# Environments
 .env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
 
-# База данных
-*.db
-*.sqlite
-*.sqlite3
-data/*.db
+# VS Code
+.vscode/
+*.code-workspace
 
-# Логи
-*.log
-logs/
-data/*.log
-
-# Временные файлы разработки
-*_OLD.py
-*_NEW.py
-*_BACKUP.*
-*_old.*
-*_new.*
-*.tmp
-*.bak
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Google Sheets credentials
-credentials.json
-token.json
-
-# Backup files
-backup_*
+# PyCharm
+.idea/
 
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# pyenv
-.python-version
+# Database
+*.db
+*.sqlite
+*.sqlite3
+data/*.db
+data/*.sqlite
 
-# Папка с данными состояния
-data/
+# Logs
+*.log
+logs/
+data/*.log
+
+# Temporary files
+*.tmp
+*.temp
+*~
+.DS_Store
+Thumbs.db
+
+# Config files with secrets
+config_local.py
+.env.local
+.env.production
+
+# Google Sheets credentials
+credentials.json
+service_account.json
+
+# Backup files
+*.bak
+backup_*
+*_backup.*
+
+# Node modules (if any)
+node_modules/
+
+# Docker
+.dockerignore
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Telegram bot specific
+chat_data_backup.json
+user_history_backup.json
