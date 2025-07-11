@@ -14,7 +14,7 @@ from config import BREAK_KEYWORDS, RETURN_CONFIRM_WORDS, BREAK_DELAY_MINUTES, BR
 from phrases import soviet_phrases
 from roles import (
     get_current_day_type, get_roles_for_day_type, get_goals_for_day_type,
-    UserRole, ROLE_EMOJIS, ROLE_DESCRIPTIONS, is_weekend_shift
+    UserRole, ROLE_EMOJIS, ROLE_DESCRIPTIONS, is_weekend_shift, get_default_role_goals
 )
 from database import db
 
@@ -41,10 +41,13 @@ def register_shift_handlers(bot):
             elif role_arg in ["мс", "mc", "startmc"]:
                 requested_role = UserRole.MC.value
         
+        # Получаем цели для ролей
+        day_of_week = datetime.datetime.now().weekday()
+        role_goals = get_default_role_goals(day_of_week)
+        
         # Определяем доступные роли для текущего дня
         current_day_type = get_current_day_type()
         available_roles = get_roles_for_day_type(current_day_type)
-        role_goals = get_goals_for_day_type(current_day_type)
         
         # Проверяем запрошенную роль
         if requested_role and requested_role not in available_roles:
@@ -81,7 +84,7 @@ def register_shift_handlers(bot):
                     shift.users[from_user.id] = init_user_data(from_user.id, username, auto_assigned_role)
                     
                     # Устанавливаем цель для роли
-                    user_goal = role_goals.get(auto_assigned_role, 15)
+                    user_goal = role_goals.get(auto_assigned_role, 18)
                     shift.users[from_user.id].goal = user_goal
                     
                     role_emoji = ROLE_EMOJIS.get(auto_assigned_role, "👤")
@@ -163,7 +166,7 @@ def register_shift_handlers(bot):
             shift.role_goals = role_goals
         
         # Устанавливаем цель для пользователя
-        user_goal = role_goals.get(assigned_role, 15)
+        user_goal = role_goals.get(assigned_role, 18)
         shift.users[from_user.id].goal = user_goal
         
         # Для совместимости оставляем main_id (будет первый заступивший)

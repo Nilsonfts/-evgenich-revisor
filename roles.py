@@ -32,13 +32,13 @@ DAY_TYPE_MAPPING = {
 DEFAULT_ROLE_CONFIG = {
     DayType.WEEKDAY: {
         "roles": [UserRole.KARAOKE_HOST.value],
-        "goals": {UserRole.KARAOKE_HOST.value: 15}
+        "goals": {UserRole.KARAOKE_HOST.value: 18}
     },
     DayType.WEEKEND: {
         "roles": [UserRole.KARAOKE_HOST.value, UserRole.MC.value],
         "goals": {
-            UserRole.KARAOKE_HOST.value: 15,
-            UserRole.MC.value: 10
+            UserRole.KARAOKE_HOST.value: 18,
+            UserRole.MC.value: 18
         }
     }
 }
@@ -85,3 +85,9 @@ def get_available_roles_for_day(day_of_week: int):
     if day_of_week in [4, 5]:  # Пятница, Суббота
         return [UserRole.KARAOKE_HOST.value, UserRole.MC.value]
     return [UserRole.KARAOKE_HOST.value]
+
+def get_default_role_goals(day_of_week: int):
+    """Возвращает цели для ролей по умолчанию (18 голосовых для всех)."""
+    if day_of_week in [4, 5]:
+        return {UserRole.KARAOKE_HOST.value: 18, UserRole.MC.value: 18}
+    return {UserRole.KARAOKE_HOST.value: 18}
