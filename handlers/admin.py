@@ -249,6 +249,13 @@ def register_admin_handlers(bot):
         except Exception as e:
             logging.error(f"Ошибка поиска проблемных зон: {e}")
             bot.send_message(chat_id, f"Произошла ошибка при анализе: {e}")
+    
+    @bot.message_handler(commands=['report'])
+    @admin_required(bot)
+    def command_report(message: types.Message):
+        """Досрочный отчет по команде администратора."""
+        bot.send_message(message.chat.id, "⏳ Формирую финальный отчет досрочно по команде администратора...")
+        send_end_of_shift_report_for_chat(bot, message.chat.id)
             
     @bot.message_handler(commands=['log'])
     @admin_required(bot)

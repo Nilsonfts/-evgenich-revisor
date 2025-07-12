@@ -266,6 +266,33 @@ def register_admin_panel_handlers(bot):
             elif call.data == "separator":
                 bot.answer_callback_query(call.id)  # Игнорируем нажатия на разделители
                 
+            elif call.data == "admin_status":
+                # Выполняем команду /status
+                from handlers.admin import command_status
+                try:
+                    command_status(call.message)
+                    bot.answer_callback_query(call.id, "📊 Статус смены")
+                except Exception as e:
+                    bot.answer_callback_query(call.id, f"❌ Ошибка: {str(e)}")
+                    
+            elif call.data == "admin_report":
+                # Выполняем команду /report
+                from handlers.admin import command_report
+                try:
+                    command_report(call.message)
+                    bot.answer_callback_query(call.id, "📝 Отчет формируется...")
+                except Exception as e:
+                    bot.answer_callback_query(call.id, f"❌ Ошибка: {str(e)}")
+                    
+            elif call.data == "admin_problems":
+                # Выполняем команду /problems
+                from handlers.admin import command_problems
+                try:
+                    command_problems(call.message)
+                    bot.answer_callback_query(call.id, "🚨 Анализ проблем...")
+                except Exception as e:
+                    bot.answer_callback_query(call.id, f"❌ Ошибка: {str(e)}")
+                
             else:
                 # Здесь будут другие обработчики
                 bot.answer_callback_query(call.id, "🔧 Функция в разработке...")

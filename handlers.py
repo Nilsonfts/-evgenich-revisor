@@ -376,20 +376,6 @@ def register_handlers(bot):
             default_timeout = chat_configs.get(str(chat_id), {}).get('voice_timeout', VOICE_TIMEOUT_MINUTES)
             bot.reply_to(message, f"**Неверный формат команды.**\n\nИспользуйте: `/time [минуты]`\n*Пример:* `/time 25`\n\nТекущее значение для этого чата: *{default_timeout} минут*.")
 
-
-    @bot.message_handler(commands=['status'])
-    @admin_required(bot)
-    def command_status(message: types.Message):
-        chat_id = message.chat.id
-        shift = chat_data.get(chat_id)
-        if not shift or not shift.main_id:
-            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('shift_not_started', ["Смена в этом чате еще не началась."]))
-            return bot.send_message(chat_id, phrase)
-        
-        report_lines = generate_detailed_report(chat_id, shift)
-        report_text = "\n".join(report_lines)
-        bot.send_message(chat_id, report_text, parse_mode="Markdown")
-    
     @bot.message_handler(commands=['rating'])
     @admin_required(bot)
     def command_rating(message: types.Message):
@@ -433,12 +419,6 @@ def register_handlers(bot):
             save_history_event(chat_id, message.from_user.id, get_username(message.from_user), "Перезапустил смену")
         else:
             bot.send_message(chat_id, "Активной смены в этом чате и так не было.")
-
-    @bot.message_handler(commands=['report'])
-    @admin_required(bot)
-    def command_report(message: types.Message):
-        bot.send_message(message.chat.id, "⏳ Формирую финальный отчет досрочно по команде администратора...")
-        send_end_of_shift_report_for_chat(bot, message.chat.id)
 
     @bot.message_handler(commands=['log'])
     @admin_required(bot)
