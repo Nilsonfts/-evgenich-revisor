@@ -151,12 +151,22 @@ def check_for_shift_end(bot):
     """Проверяет, не наступило ли время окончания смены для какого-либо чата."""
     # Создаем копию для безопасной итерации
     configs_copy = list(chat_configs.items())
-
+    
+    # Проверяем все активные смены, даже если нет конфигурации
+    all_chats_to_check = set()
+    
+    # Добавляем чаты из конфигурации
     for chat_id_str, config in configs_copy:
+        all_chats_to_check.add(chat_id_str)
+    
+    # Добавляем чаты с активными сменами (дефолтное время 04:00)
+    for chat_id in chat_data.keys():
+        all_chats_to_check.add(str(chat_id))
+
+    for chat_id_str in all_chats_to_check:
+        config = chat_configs.get(chat_id_str, {})
         tz_name = config.get('timezone', 'Europe/Moscow')
-        end_time_str = config.get('end_time')
-        if not end_time_str:
-            continue
+        end_time_str = config.get('end_time', '04:00')  # Дефолтное время 04:00
         
         try:
             local_tz = pytz.timezone(tz_name)

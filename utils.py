@@ -67,7 +67,11 @@ def admin_required(bot):
     return decorator
 
 def get_username(user: types.User) -> str:
-    """Возвращает форматированное имя пользователя."""
+    """Возвращает имя пользователя без символа @."""
+    return user.username if user.username else user.first_name
+
+def get_username_with_at(user: types.User) -> str:
+    """Возвращает имя пользователя с символом @."""
     return f"@{user.username}" if user.username else user.first_name
 
 def get_chat_title(bot, chat_id: int) -> str:
@@ -127,14 +131,14 @@ def handle_user_return(bot, chat_id: int, user_id: int):
         phrase_template = random.choice(
             soviet_phrases.get("system_messages", {}).get('return_late', ["✅ {username}, с возвращением! Вы опоздали на {minutes} мин."])
         )
-        message_text = phrase_template.format(username=user.username, minutes=late_minutes)
+        message_text = phrase_template.format(username=f"@{user.username}" if user.username and not user.username.startswith('@') else user.username, minutes=late_minutes)
         bot.send_message(chat_id, message_text)
         
     else:
         phrase_template = random.choice(
             soviet_phrases.get("system_messages", {}).get('return_on_time', ["👍 {username}, с возвращением! Молодец, что вернулись вовремя."])
         )
-        message_text = phrase_template.format(username=user.username)
+        message_text = phrase_template.format(username=f"@{user.username}" if user.username and not user.username.startswith('@') else user.username)
         bot.send_message(chat_id, message_text)
         
     save_history_event(chat_id, user_id, user.username, f"Вернулся с перерыва (длительность {break_duration_minutes:.1f} мин)")

@@ -8,7 +8,7 @@ import pandas as pd
 from collections import Counter
 from telebot import types
 
-from utils import get_username, is_admin
+from utils import get_username, get_username_with_at, is_admin
 from state import chat_data
 from g_sheets import get_sheet
 from phrases import soviet_phrases
@@ -54,7 +54,7 @@ def register_user_handlers(bot):
         if not pd: return bot.reply_to(message, "Модуль для анализа данных (pandas) не загружен.")
         
         user_id = message.from_user.id
-        username = get_username(message.from_user)
+        username = get_username_with_at(message.from_user)
         bot.reply_to(message, f"📊 Собираю вашу общую статистику из Google Таблицы, {username}. Минутку...")
         
         worksheet = get_sheet()
