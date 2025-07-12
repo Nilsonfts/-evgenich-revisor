@@ -582,4 +582,179 @@ def register_wizard_handlers(bot):
         except Exception as e:
             bot.send_message(chat_id, f"❌ Ошибка при удалении: {str(e)}")
 
-    # Удаляем старые функции и оставляем только старую обработку для совместимости
+    # ========================================
+    #   ОБРАБОТЧИКИ КОЛЛБЕКОВ ДЛЯ РЕКЛАМЫ
+    # ========================================
+    
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("ads_"))
+    def handle_ads_callbacks(call):
+        """Обработчик всех коллбеков новой системы рекламы."""
+        try:
+            if call.data == "ads_add_new":
+                start_add_ad_wizard(bot, call.message.chat.id, call.from_user.id)
+                bot.answer_callback_query(call.id, "Начинаем добавление рекламы")
+                
+            elif call.data == "ads_view_categories":
+                show_ad_categories_menu(bot, call.message.chat.id)
+                bot.answer_callback_query(call.id)
+                
+            elif call.data.startswith("ads_category_"):
+                category_id = call.data.replace("ads_category_", "")
+                show_ads_in_category(bot, call.message.chat.id, category_id)
+                bot.answer_callback_query(call.id)
+                
+            elif call.data == "ads_search":
+                start_ads_search(bot, call.message.chat.id, call.from_user.id)
+                bot.answer_callback_query(call.id, "Начинаем поиск")
+                
+            elif call.data == "ads_stats":
+                show_ads_statistics(bot, call.message.chat.id)
+                bot.answer_callback_query(call.id)
+                
+            elif call.data == "ads_back_main":
+                command_ads_new(call.message)
+                bot.answer_callback_query(call.id)
+                
+            elif call.data.startswith("ads_view_"):
+                # Обработка просмотра конкретного объявления
+                parts = call.data.replace("ads_view_", "").split("_")
+                if len(parts) >= 4:
+                    brand, city, ad_type, index = parts[0], parts[1], parts[2], int(parts[3])
+                    show_single_ad(bot, call.message.chat.id, brand, city, ad_type, index)
+                bot.answer_callback_query(call.id)
+                
+        except Exception as e:
+            bot.answer_callback_query(call.id, f"Ошибка: {str(e)}")
+    
+    def start_ads_search(bot, chat_id: int, user_id: int):
+        """Начинает поиск рекламы по ключевым словам."""
+        user_states[user_id] = {
+            "state": "ads_searching", 
+            "chat_id": chat_id
+        }
+        
+        text = ("🔍 **Поиск рекламы**\n\n"
+                "Введите ключевые слова для поиска по всем объявлениям.\n"
+                "*Пример:* `скидка`, `караоке`, `меню`\n\n"
+                "Или отправьте /cancel для отмены.")
+        
+        msg = bot.send_message(chat_id, text, parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_ads_search, bot)
+    
+    def process_ads_search(message: types.Message, bot):
+        """Обработка поискового запроса."""
+        user_id = message.from_user.id
+        state = user_states.get(user_id, {})
+        if not state or state.get("state") != "ads_searching":
+            return
+        
+        if message.text == '/cancel':
+            del user_states[user_id]
+            return bot.reply_to(message, "Поиск отменен.")
+        
+        search_query = message.text.lower()
+        found_ads = []
+        
+        # Поиск по всем объявлениям
+        for brand, brand_data in ad_templates.items():
+            for city, city_data in brand_data.items():
+                for ad_type, ads_list in city_data.items():
+                    for i, ad in enumerate(ads_list):
+                        if search_query in ad.get("text", "").lower():
+                            found_ads.append({
+                                "brand": brand,
+                                "city": city,
+                                "type": ad_type,
+                                "index": i,
+                                "text": ad.get("text", ""),
+                                "category": ad.get("category", "general")
+                            })
+        
+        if not found_ads:
+            bot.reply_to(message, f"🔍 По запросу **\"{search_query}\"** ничего не найдено.", parse_mode="Markdown")
+        else:
+            text = f"🔍 **Результаты поиска по запросу \"{search_query}\"**\n\nНайдено: {len(found_ads)} объявлений\n\n"
+            
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            for i, ad in enumerate(found_ads[:10]):  # Показываем первые 10
+                category_name = AD_CATEGORIES.get(ad["category"], {}).get("name", "")
+                preview = ad["text"][:50] + "..." if len(ad["text"]) > 50 else ad["text"]
+                markup.add(types.InlineKeyboardButton(
+                    f"{category_name} {ad['brand']}/{ad['city']} - {preview}",
+                    callback_data=f"ads_view_{ad['brand']}_{ad['city']}_{ad['type']}_{ad['index']}"
+                ))
+            
+            if len(found_ads) > 10:
+                text += f"*Показаны первые 10 из {len(found_ads)} результатов*"
+            
+            bot.reply_to(message, text, parse_mode="Markdown", reply_markup=markup)
+        
+        # Очищаем состояние
+        if user_id in user_states:
+            del user_states[user_id]
+    
+    def show_ads_statistics(bot, chat_id: int):
+        """Показывает статистику по рекламе."""
+        total_ads = 0
+        categories_stats = {cat_id: 0 for cat_id in AD_CATEGORIES.keys()}
+        brands_stats = {}
+        
+        # Подсчитываем статистику
+        for brand, brand_data in ad_templates.items():
+            brand_count = 0
+            for city, city_data in brand_data.items():
+                for ad_type, ads_list in city_data.items():
+                    for ad in ads_list:
+                        total_ads += 1
+                        brand_count += 1
+                        category = ad.get("category", "general")
+                        if category in categories_stats:
+                            categories_stats[category] += 1
+            brands_stats[brand] = brand_count
+        
+        # Формируем текст статистики
+        text = f"📊 **Статистика рекламы**\n\n**Всего объявлений:** {total_ads}\n\n"
+        
+        text += "**По категориям:**\n"
+        for cat_id, count in categories_stats.items():
+            if count > 0:
+                cat_name = AD_CATEGORIES[cat_id]["name"]
+                text += f"  {cat_name}: {count}\n"
+        
+        text += "\n**По брендам:**\n"
+        for brand, count in sorted(brands_stats.items(), key=lambda x: x[1], reverse=True):
+            text += f"  {brand.upper()}: {count}\n"
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("« Назад", callback_data="ads_back_main"))
+        
+        bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
+    
+    def show_single_ad(bot, chat_id: int, brand: str, city: str, ad_type: str, index: int):
+        """Показывает детали конкретного объявления."""
+        try:
+            ad = ad_templates[brand][city][ad_type][index]
+            category_name = AD_CATEGORIES.get(ad.get("category", "general"), {}).get("name", "Неизвестно")
+            
+            text = (f"📝 **Детали объявления**\n\n"
+                   f"**Бренд:** {brand.upper()}\n"
+                   f"**Город:** {city.capitalize()}\n"
+                   f"**Тип:** {ad_type.capitalize()}\n"
+                   f"**Категория:** {category_name}\n"
+                   f"**Создано:** {ad.get('created', 'Неизвестно')}\n"
+                   f"**Автор:** {ad.get('created_by', 'Неизвестно')}\n\n"
+                   f"**Текст:**\n{ad.get('text', '')}")
+            
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            markup.add(
+                types.InlineKeyboardButton("✏️ Редактировать", 
+                                         callback_data=f"ads_edit_{brand}_{city}_{ad_type}_{index}"),
+                types.InlineKeyboardButton("🗑️ Удалить", 
+                                         callback_data=f"ads_delete_{brand}_{city}_{ad_type}_{index}")
+            )
+            markup.add(types.InlineKeyboardButton("« Назад", callback_data="ads_view_categories"))
+            
+            bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
+            
+        except (KeyError, IndexError):
+            bot.send_message(chat_id, "❌ Объявление не найдено или было удалено.")
