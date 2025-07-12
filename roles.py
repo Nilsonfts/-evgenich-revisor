@@ -38,7 +38,7 @@ DEFAULT_ROLE_CONFIG = {
         "roles": [UserRole.KARAOKE_HOST.value, UserRole.MC.value],
         "goals": {
             UserRole.KARAOKE_HOST.value: 18,
-            UserRole.MC.value: 18
+            UserRole.MC.value: 15
         }
     }
 }
@@ -52,7 +52,7 @@ ROLE_EMOJIS = {
 # Описания ролей
 ROLE_DESCRIPTIONS = {
     UserRole.KARAOKE_HOST.value: "Караоке ведущий",
-    UserRole.MC.value: "Ведущий-аниматор (МС)"
+    UserRole.MC.value: "МС"
 }
 
 def get_current_day_type() -> DayType:

@@ -8,6 +8,41 @@ from utils import admin_required, save_json_data
 from state import user_states, chat_configs, ad_templates
 from config import TIMEZONE_MAP, CHAT_CONFIG_FILE, AD_TEMPLATES_FILE
 
+# Доступные концепции
+AVAILABLE_CONCEPTS = {
+    "РВБ": {"name": "РВБ", "description": "Концепция РВБ - романтический вечер для двоих"},
+    "НЕБАР": {"name": "НЕБАР", "description": "НЕБАР - неформальный бар с живой атмосферой"},
+    "ЕВГЕНИЧ": {"name": "ЕВГЕНИЧ", "description": "ЕВГЕНИЧ - классическое караоке"},
+    "СПЛЕТНИ": {"name": "СПЛЕТНИ", "description": "СПЛЕТНИ - уютная атмосфера для откровенных разговоров"},
+    "ОРБИТА": {"name": "ОРБИТА", "description": "ОРБИТА - космическая тематика"}
+}
+
+# Предопределенные категории рекламы с AI-помощью
+AD_CATEGORIES = {
+    "menu": {"name": "🍽️ Меню", "keywords": ["меню", "блюдо", "кухня", "еда", "напиток", "акция", "скидка"]},
+    "events": {"name": "🎉 События", "keywords": ["вечеринка", "корпоратив", "день рождения", "праздник", "мероприятие"]},
+    "promo": {"name": "🎁 Акции", "keywords": ["скидка", "акция", "промо", "бесплатно", "подарок", "бонус"]},
+    "karaoke": {"name": "🎤 Караоке", "keywords": ["караоке", "песня", "микрофон", "сцена", "пение"]},
+    "booking": {"name": "📅 Бронь", "keywords": ["бронирование", "столик", "резерв", "место", "заказ"]},
+    "general": {"name": "📢 Общее", "keywords": ["работаем", "открыты", "график", "контакты", "адрес"]}
+}
+
+def categorize_ad_text(text: str) -> str:
+    """Автоматически определяет категорию рекламного текста."""
+    text_lower = text.lower()
+    scores = {}
+    
+    for category_id, category_data in AD_CATEGORIES.items():
+        score = 0
+        for keyword in category_data["keywords"]:
+            if keyword in text_lower:
+                score += 1
+        scores[category_id] = score
+    
+    # Возвращаем категорию с наибольшим количеством совпадений
+    best_category = max(scores, key=scores.get)
+    return best_category if scores[best_category] > 0 else "general"
+
 def register_wizard_handlers(bot):
 
     # ========================================
@@ -21,18 +56,24 @@ def register_wizard_handlers(bot):
         chat_id = message.chat.id
         user_id = message.from_user.id
         
-        user_states[user_id] = {"state": "wizard_awaiting_brand_city", "chat_id": chat_id, "data": {}}
+        user_states[user_id] = {"state": "wizard_awaiting_concept", "chat_id": chat_id, "data": {}}
+        
+        # Создаем клавиатуру с концепциями
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        for concept_id, concept_info in AVAILABLE_CONCEPTS.items():
+            markup.add(types.InlineKeyboardButton(
+                f"{concept_info['name']} - {concept_info['description']}", 
+                callback_data=f"wizard_concept_{concept_id}"
+            ))
         
         text = ("🧙‍♂️ **Мастер настройки чата**\n\n"
-                "Я задам вам 4 вопроса для полной настройки. "
+                "Я помогу настроить чат в 5 шагов. "
                 "Чтобы отменить настройку на любом шаге, просто отправьте /cancel.\n\n"
-                "**Шаг 1 из 4:** Введите **бренд** и **город** для этого чата.\n"
-                "*Пример:* `my-brand moscow`")
-        msg = bot.send_message(chat_id, text, parse_mode="Markdown")
-        bot.register_next_step_handler(msg, process_wizard_brand_city, bot)
+                "**Шаг 1 из 5:** Выберите **концепцию** для этого чата:")
+        bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
 
     def process_wizard_brand_city(message: types.Message, bot):
-        """Шаг 1: Обработка бренда и города."""
+        """Шаг 2: Обработка бренда и города."""
         user_id = message.from_user.id
         state = user_states.get(user_id, {})
         if not state or state.get("state") != "wizard_awaiting_brand_city": return
@@ -46,16 +87,47 @@ def register_wizard_handlers(bot):
             state["data"]["city"] = city.lower()
             
             state["state"] = "wizard_awaiting_timezone"
-            text = ("✅ **Шаг 2 из 4:** Отлично! Теперь укажите **часовой пояс**.\n"
+            text = ("✅ **Шаг 3 из 5:** Отлично! Теперь укажите **часовой пояс**.\n"
                     "Введите смещение от Москвы. *Пример:* `+3` или `-1`")
             msg = bot.reply_to(message, text, parse_mode="Markdown")
             bot.register_next_step_handler(msg, process_wizard_timezone, bot)
         except ValueError:
             msg = bot.reply_to(message, "❌ **Ошибка.** Пожалуйста, введите два слова: бренд и город. *Пример:* `my-brand moscow`", parse_mode="Markdown")
             bot.register_next_step_handler(msg, process_wizard_brand_city, bot)
+
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("wizard_concept_"))
+    def handle_wizard_concept_callback(call):
+        """Обработка выбора концепции в мастере настройки."""
+        user_id = call.from_user.id
+        state = user_states.get(user_id, {})
+        if not state or state.get("state") != "wizard_awaiting_concept":
+            return
+        
+        # Извлекаем ID концепции из коллбек данных
+        concept_id = call.data.replace("wizard_concept_", "")
+        concept_info = AVAILABLE_CONCEPTS.get(concept_id)
+        
+        if not concept_info:
+            bot.answer_callback_query(call.id, "❌ Ошибка: неизвестная концепция")
+            return
+        
+        # Сохраняем выбранную концепцию
+        state["data"]["concept"] = concept_id
+        state["state"] = "wizard_awaiting_brand_city"
+        
+        # Переходим к следующему шагу
+        text = (f"✅ **Концепция выбрана:** {concept_info['name']}\n\n"
+                "**Шаг 2 из 5:** Введите **бренд** и **город** для этого чата.\n"
+                "*Пример:* `my-brand moscow`")
+        
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        bot.answer_callback_query(call.id, f"Выбрана концепция: {concept_info['name']}")
+        
+        # Регистрируем следующий шаг
+        bot.register_next_step_handler_by_chat_id(call.message.chat.id, process_wizard_brand_city, bot)
             
     def process_wizard_timezone(message: types.Message, bot):
-        """Шаг 2: Обработка часового пояса."""
+        """Шаг 3: Обработка часового пояса."""
         user_id = message.from_user.id
         state = user_states.get(user_id, {})
         if not state or state.get("state") != "wizard_awaiting_timezone": return
@@ -73,13 +145,13 @@ def register_wizard_handlers(bot):
         state["data"]["timezone"] = tz_name
         
         state["state"] = "wizard_awaiting_timing"
-        text = ("✅ **Шаг 3 из 4:** Часовой пояс установлен! Теперь задайте **график смены**.\n"
+        text = ("✅ **Шаг 4 из 5:** Часовой пояс установлен! Теперь задайте **график смены**.\n"
                 "Введите время начала и конца. *Пример:* `19:00 04:00`")
         msg = bot.reply_to(message, text, parse_mode="Markdown")
         bot.register_next_step_handler(msg, process_wizard_timing, bot)
 
     def process_wizard_timing(message: types.Message, bot):
-        """Шаг 3: Обработка времени смены."""
+        """Шаг 4: Обработка времени смены."""
         user_id = message.from_user.id
         state = user_states.get(user_id, {})
         if not state or state.get("state") != "wizard_awaiting_timing": return
@@ -95,7 +167,7 @@ def register_wizard_handlers(bot):
             state["data"]["end_time"] = end_time_str
             
             state["state"] = "wizard_awaiting_goal"
-            text = ("✅ **Шаг 4 из 4:** График задан! И последнее: укажите **план (норму) ГС** за смену.\n"
+            text = ("✅ **Шаг 5 из 5:** График задан! И последнее: укажите **план (норму) ГС** за смену.\n"
                     "Введите одно число. *Пример:* `25`")
             msg = bot.reply_to(message, text, parse_mode="Markdown")
             bot.register_next_step_handler(msg, process_wizard_goal, bot)
@@ -104,7 +176,7 @@ def register_wizard_handlers(bot):
             bot.register_next_step_handler(msg, process_wizard_timing, bot)
 
     def process_wizard_goal(message: types.Message, bot):
-        """Шаг 4: Обработка цели и завершение."""
+        """Шаг 5: Обработка цели и завершение."""
         user_id = message.from_user.id
         state = user_states.get(user_id, {})
         if not state or state.get("state") != "wizard_awaiting_goal": return
@@ -123,8 +195,13 @@ def register_wizard_handlers(bot):
             chat_configs[chat_id_to_configure].update(state["data"])
             save_json_data(CHAT_CONFIG_FILE, chat_configs)
             
+            # Получаем информацию о выбранной концепции
+            concept_info = AVAILABLE_CONCEPTS.get(state["data"].get("concept", ""), {})
+            concept_name = concept_info.get("name", "Не указана")
+            
             final_text = ("🎉 **Настройка завершена!**\n\n"
                           "Чат успешно настроен со следующими параметрами:\n"
+                          f"  - Концепция: `{concept_name}`\n"
                           f"  - Бренд: `{state['data']['brand']}`\n"
                           f"  - Город: `{state['data']['city']}`\n"
                           f"  - Часовой пояс: `{state['data']['timezone']}`\n"
@@ -141,73 +218,368 @@ def register_wizard_handlers(bot):
                 del user_states[user_id]
     
     # ========================================
-    #   УПРАВЛЕНИЕ РЕКЛАМОЙ (/ads)
+    #   НОВАЯ СИСТЕМА УПРАВЛЕНИЯ РЕКЛАМОЙ (/ads)
     # ========================================
     
     @bot.message_handler(commands=['ads'])
     @admin_required(bot)
-    def command_ads(message: types.Message):
+    def command_ads_new(message: types.Message):
+        """Новая система управления рекламой с категориями."""
         markup = types.InlineKeyboardMarkup(row_width=2)
-        brands = list(ad_templates.keys())
-        for brand in brands:
-            markup.add(types.InlineKeyboardButton(brand.upper(), callback_data=f"ad_brand_{brand}"))
-        markup.add(types.InlineKeyboardButton("➕ Добавить новый бренд", callback_data="ad_addbrand_form"))
-        bot.send_message(message.chat.id, "📝 Выберите бренд для управления рекламой:", reply_markup=markup)
-    
-    def show_ad_cities_menu(bot, chat_id: int, brand: str):
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        cities = list(ad_templates.get(brand, {}).keys())
-        for city in cities:
-            markup.add(types.InlineKeyboardButton(city.capitalize(), callback_data=f"ad_city_{brand}_{city}"))
-        markup.add(types.InlineKeyboardButton("➕ Добавить новый город", callback_data=f"ad_addcity_form_{brand}"))
-        markup.add(types.InlineKeyboardButton("« Назад к брендам", callback_data="ad_backtobrand"))
-        bot.send_message(chat_id, f"Бренд: *{brand.upper()}*\nВыберите город:", reply_markup=markup, parse_mode="Markdown")
-    
-    def show_ad_actions_menu(bot, chat_id: int, brand: str, city: str):
-        markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
-            types.InlineKeyboardButton("👁️‍🗨️ Просмотреть шаблоны", callback_data=f"ad_view_{brand}_{city}"),
-            types.InlineKeyboardButton("➕ Добавить шаблон", callback_data=f"ad_addform_{brand}_{city}"),
-            types.InlineKeyboardButton("➖ Удалить шаблон", callback_data=f"ad_delform_{brand}_{city}"),
-            types.InlineKeyboardButton("« Назад к городам", callback_data=f"ad_backtocity_{brand}")
+            types.InlineKeyboardButton("➕ Добавить рекламу", callback_data="ads_add_new"),
+            types.InlineKeyboardButton("📁 Просмотр по категориям", callback_data="ads_view_categories")
         )
-        bot.send_message(chat_id, f"Бренд: *{brand.upper()}* / Город: *{city.capitalize()}*\nВыберите действие:", reply_markup=markup, parse_mode="Markdown")
-
-    def show_templates_for_deletion(bot, chat_id: int, brand: str, city: str):
-        templates = ad_templates.get(brand, {}).get(city, {})
-        if not templates:
-            bot.send_message(chat_id, "Здесь нет шаблонов для удаления.")
+        markup.add(
+            types.InlineKeyboardButton("🔍 Поиск рекламы", callback_data="ads_search"),
+            types.InlineKeyboardButton("📊 Статистика", callback_data="ads_stats")
+        )
+        
+        text = ("🎯 **Система управления рекламой 2.0**\n\n"
+                "**Новые возможности:**\n"
+                "• Автоматическая категоризация текстов\n"
+                "• Умный поиск по ключевым словам\n"
+                "• Статистика использования\n"
+                "• Простое добавление и редактирование\n\n"
+                "Выберите действие:")
+        
+        bot.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=markup)
+    
+    def show_ad_categories_menu(bot, chat_id: int):
+        """Показать меню выбора категорий."""
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        
+        for category_id, category_data in AD_CATEGORIES.items():
+            # Подсчитываем количество объявлений в каждой категории
+            count = sum(1 for brand_data in ad_templates.values() 
+                       for city_data in brand_data.values() 
+                       for ads in city_data.values() 
+                       for ad in ads if ad.get("category") == category_id)
+            
+            markup.add(types.InlineKeyboardButton(
+                f"{category_data['name']} ({count})", 
+                callback_data=f"ads_category_{category_id}"
+            ))
+        
+        markup.add(types.InlineKeyboardButton("« Назад", callback_data="ads_back_main"))
+        
+        bot.send_message(chat_id, "📁 **Категории рекламы:**\nВыберите категорию для просмотра:", 
+                        parse_mode="Markdown", reply_markup=markup)
+    
+    def show_ads_in_category(bot, chat_id: int, category_id: str):
+        """Показать все объявления в определенной категории."""
+        category_name = AD_CATEGORIES.get(category_id, {}).get("name", "Неизвестная")
+        ads_in_category = []
+        
+        # Собираем все объявления этой категории
+        for brand, brand_data in ad_templates.items():
+            for city, city_data in brand_data.items():
+                for ad_type, ads_list in city_data.items():
+                    for i, ad in enumerate(ads_list):
+                        if ad.get("category") == category_id:
+                            ads_in_category.append({
+                                "brand": brand,
+                                "city": city,
+                                "type": ad_type,
+                                "index": i,
+                                "text": ad.get("text", ""),
+                                "created": ad.get("created", "Неизвестно")
+                            })
+        
+        if not ads_in_category:
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("« Назад к категориям", callback_data="ads_view_categories"))
+            bot.send_message(chat_id, f"📁 **{category_name}**\n\nВ этой категории пока нет объявлений.", 
+                           parse_mode="Markdown", reply_markup=markup)
             return
+        
+        # Показываем список объявлений
+        text = f"📁 **{category_name}** ({len(ads_in_category)} объявлений)\n\n"
         markup = types.InlineKeyboardMarkup(row_width=1)
-        for tpl_key in templates.keys():
-            markup.add(types.InlineKeyboardButton(f"❌ {tpl_key}", callback_data=f"ad_delete_{brand}_{city}_{tpl_key}"))
-        markup.add(types.InlineKeyboardButton("« Назад", callback_data=f"ad_city_{brand}_{city}"))
-        bot.send_message(chat_id, "Выберите шаблон для удаления:", reply_markup=markup)
-
-    @bot.message_handler(func=lambda message: user_states.get(message.from_user.id, {}).get("state") == "awaiting_ad_template")
-    def receive_ad_template_to_add(message: types.Message):
+        
+        for i, ad in enumerate(ads_in_category[:10]):  # Показываем только первые 10
+            preview = ad["text"][:50] + "..." if len(ad["text"]) > 50 else ad["text"]
+            markup.add(types.InlineKeyboardButton(
+                f"{ad['brand']}/{ad['city']} - {preview}",
+                callback_data=f"ads_view_{ad['brand']}_{ad['city']}_{ad['type']}_{ad['index']}"
+            ))
+        
+        if len(ads_in_category) > 10:
+            text += f"*Показаны первые 10 из {len(ads_in_category)} объявлений*\n\n"
+        
+        markup.add(types.InlineKeyboardButton("« Назад к категориям", callback_data="ads_view_categories"))
+        
+        bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
+    
+    def start_add_ad_wizard(bot, chat_id: int, user_id: int):
+        """Начинает процесс добавления нового объявления."""
+        user_states[user_id] = {
+            "state": "ads_wizard_awaiting_brand", 
+            "chat_id": chat_id,
+            "ad_data": {}
+        }
+        
+        text = ("➕ **Добавление нового объявления**\n\n"
+                "**Шаг 1 из 4:** Введите **бренд** для объявления.\n"
+                "*Пример:* `my-brand`\n\n"
+                "Или отправьте /cancel для отмены.")
+        
+        msg = bot.send_message(chat_id, text, parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_ad_brand, bot)
+    
+    def process_ad_brand(message: types.Message, bot):
+        """Обработка бренда для объявления."""
         user_id = message.from_user.id
-        state = user_states.get(user_id)
-        if not state: return
-
+        state = user_states.get(user_id, {})
+        if not state or state.get("state") != "ads_wizard_awaiting_brand":
+            return
+        
         if message.text == '/cancel':
             del user_states[user_id]
-            return bot.send_message(message.chat.id, "Добавление шаблона отменено.")
-        try:
-            name, text = message.text.split('\n', 1)
-            name, text = name.strip(), text.strip()
-            if not name or not text: raise ValueError
-            
-            brand, city = state['brand'], state['city']
-            if brand not in ad_templates: ad_templates[brand] = {}
-            if city not in ad_templates[brand]: ad_templates[brand][city] = {}
-            ad_templates[brand][city][name] = text
-
-            if save_json_data(AD_TEMPLATES_FILE, ad_templates):
-                bot.send_message(message.chat.id, f"✅ Шаблон *'{name}'* успешно добавлен для *{brand.upper()}/{city.capitalize()}*.", parse_mode="Markdown")
-            else:
-                bot.send_message(message.chat.id, "❌ Ошибка сохранения файла шаблонов.")
-            
+            return bot.reply_to(message, "Добавление объявления отменено.")
+        
+        brand = message.text.strip().lower()
+        state["ad_data"]["brand"] = brand
+        state["state"] = "ads_wizard_awaiting_city"
+        
+        text = ("✅ **Шаг 2 из 4:** Введите **город** для объявления.\n"
+                "*Пример:* `moscow`")
+        
+        msg = bot.reply_to(message, text, parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_ad_city, bot)
+    
+    def process_ad_city(message: types.Message, bot):
+        """Обработка города для объявления."""
+        user_id = message.from_user.id
+        state = user_states.get(user_id, {})
+        if not state or state.get("state") != "ads_wizard_awaiting_city":
+            return
+        
+        if message.text == '/cancel':
             del user_states[user_id]
-        except (ValueError, KeyError):
-            bot.send_message(message.chat.id, "Неверный формат. Пожалуйста, отправьте сообщение в формате:\n\n`Название шаблона`\n`Текст шаблона...`", parse_mode="Markdown")
+            return bot.reply_to(message, "Добавление объявления отменено.")
+        
+        city = message.text.strip().lower()
+        state["ad_data"]["city"] = city
+        state["state"] = "ads_wizard_awaiting_type"
+        
+        # Показываем типы объявлений
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        ad_types = ["вечерняя", "дневная", "акция", "общая"]
+        for ad_type in ad_types:
+            markup.add(types.InlineKeyboardButton(
+                ad_type.capitalize(), 
+                callback_data=f"ads_wizard_type_{ad_type}"
+            ))
+        
+        text = ("✅ **Шаг 3 из 4:** Выберите **тип** объявления:")
+        
+        bot.reply_to(message, text, parse_mode="Markdown", reply_markup=markup)
+    
+    def process_ad_text(message: types.Message, bot):
+        """Обработка текста объявления."""
+        user_id = message.from_user.id
+        state = user_states.get(user_id, {})
+        if not state or state.get("state") != "ads_wizard_awaiting_text":
+            return
+        
+        if message.text == '/cancel':
+            del user_states[user_id]
+            return bot.reply_to(message, "Добавление объявления отменено.")
+        
+        ad_text = message.text.strip()
+        
+        # Автоматически определяем категорию с помощью AI
+        category = categorize_ad_text(ad_text)
+        category_name = AD_CATEGORIES.get(category, {}).get("name", "Неизвестно")
+        
+        # Сохраняем объявление
+        brand = state["ad_data"]["brand"]
+        city = state["ad_data"]["city"]
+        ad_type = state["ad_data"]["type"]
+        
+        # Создаем структуру если её нет
+        if brand not in ad_templates:
+            ad_templates[brand] = {}
+        if city not in ad_templates[brand]:
+            ad_templates[brand][city] = {}
+        if ad_type not in ad_templates[brand][city]:
+            ad_templates[brand][city][ad_type] = []
+        
+        # Создаем новое объявление с метаданными
+        new_ad = {
+            "text": ad_text,
+            "category": category,
+            "created": datetime.datetime.now().strftime("%d.%m.%Y %H:%M"),
+            "created_by": message.from_user.username or message.from_user.first_name
+        }
+        
+        ad_templates[brand][city][ad_type].append(new_ad)
+        
+        # Сохраняем в файл
+        save_json_data(AD_TEMPLATES_FILE, ad_templates)
+        
+        final_text = (f"🎉 **Объявление успешно добавлено!**\n\n"
+                     f"**Бренд:** {brand.upper()}\n"
+                     f"**Город:** {city.capitalize()}\n"
+                     f"**Тип:** {ad_type.capitalize()}\n"
+                     f"**Категория:** {category_name}\n"
+                     f"**Автор:** {new_ad['created_by']}\n\n"
+                     f"**Текст:**\n{ad_text}")
+        
+        bot.reply_to(message, final_text, parse_mode="Markdown")
+        
+        # Очищаем состояние
+        del user_states[user_id]
+    
+    # Обработчик для выбора типа объявления
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("ads_wizard_type_"))
+    def handle_ad_type_callback(call):
+        """Обработка выбора типа объявления."""
+        user_id = call.from_user.id
+        state = user_states.get(user_id, {})
+        if not state or state.get("state") != "ads_wizard_awaiting_type":
+            return
+        
+        ad_type = call.data.replace("ads_wizard_type_", "")
+        state["ad_data"]["type"] = ad_type
+        state["state"] = "ads_wizard_awaiting_text"
+        
+        text = (f"✅ **Тип выбран:** {ad_type.capitalize()}\n\n"
+                "**Шаг 4 из 4:** Введите **текст объявления**.\n"
+                "Система автоматически определит категорию на основе содержания.\n\n"
+                "*Совет:* Используйте ключевые слова как 'скидка', 'караоке', 'меню' для точной категоризации.")
+        
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        bot.answer_callback_query(call.id, f"Тип: {ad_type}")
+        
+        # Регистрируем следующий шаг
+        bot.register_next_step_handler_by_chat_id(call.message.chat.id, process_ad_text, bot)
+    
+    # Обработчики для редактирования и удаления
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("ads_edit_"))
+    def handle_ad_edit_callback(call):
+        """Обработка редактирования объявления."""
+        try:
+            parts = call.data.replace("ads_edit_", "").split("_")
+            if len(parts) >= 4:
+                brand, city, ad_type, index = parts[0], parts[1], parts[2], int(parts[3])
+                start_edit_ad_wizard(bot, call.message.chat.id, call.from_user.id, brand, city, ad_type, index)
+                bot.answer_callback_query(call.id, "Начинаем редактирование")
+        except Exception as e:
+            bot.answer_callback_query(call.id, f"Ошибка: {str(e)}")
+    
+    @bot.callback_query_handler(func=lambda call: call.data.startswith("ads_delete_"))
+    def handle_ad_delete_callback(call):
+        """Обработка удаления объявления."""
+        try:
+            parts = call.data.replace("ads_delete_", "").split("_")
+            if len(parts) >= 4:
+                brand, city, ad_type, index = parts[0], parts[1], parts[2], int(parts[3])
+                delete_ad(bot, call.message.chat.id, brand, city, ad_type, index)
+                bot.answer_callback_query(call.id, "Объявление удалено")
+        except Exception as e:
+            bot.answer_callback_query(call.id, f"Ошибка: {str(e)}")
+    
+    def start_edit_ad_wizard(bot, chat_id: int, user_id: int, brand: str, city: str, ad_type: str, index: int):
+        """Начинает процесс редактирования объявления."""
+        try:
+            ad = ad_templates[brand][city][ad_type][index]
+            
+            user_states[user_id] = {
+                "state": "ads_edit_awaiting_text",
+                "chat_id": chat_id,
+                "edit_data": {
+                    "brand": brand,
+                    "city": city,
+                    "type": ad_type,
+                    "index": index,
+                    "original_text": ad["text"]
+                }
+            }
+            
+            text = (f"✏️ **Редактирование объявления**\n\n"
+                   f"**Текущий текст:**\n{ad['text']}\n\n"
+                   f"Введите новый текст или отправьте /cancel для отмены:")
+            
+            msg = bot.send_message(chat_id, text, parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_edit_ad_text, bot)
+            
+        except (KeyError, IndexError):
+            bot.send_message(chat_id, "❌ Объявление не найдено.")
+    
+    def process_edit_ad_text(message: types.Message, bot):
+        """Обработка нового текста при редактировании."""
+        user_id = message.from_user.id
+        state = user_states.get(user_id, {})
+        if not state or state.get("state") != "ads_edit_awaiting_text":
+            return
+        
+        if message.text == '/cancel':
+            del user_states[user_id]
+            return bot.reply_to(message, "Редактирование отменено.")
+        
+        edit_data = state["edit_data"]
+        new_text = message.text.strip()
+        
+        try:
+            # Обновляем объявление
+            brand, city, ad_type, index = edit_data["brand"], edit_data["city"], edit_data["type"], edit_data["index"]
+            
+            # Автоматически определяем новую категорию
+            new_category = categorize_ad_text(new_text)
+            
+            ad_templates[brand][city][ad_type][index].update({
+                "text": new_text,
+                "category": new_category,
+                "updated": datetime.datetime.now().strftime("%d.%m.%Y %H:%M"),
+                "updated_by": message.from_user.username or message.from_user.first_name
+            })
+            
+            # Сохраняем в файл
+            save_json_data(AD_TEMPLATES_FILE, ad_templates)
+            
+            category_name = AD_CATEGORIES.get(new_category, {}).get("name", "Неизвестно")
+            
+            bot.reply_to(message, 
+                        f"✅ **Объявление обновлено!**\n\n"
+                        f"**Новая категория:** {category_name}\n"
+                        f"**Новый текст:**\n{new_text}", 
+                        parse_mode="Markdown")
+            
+        except Exception as e:
+            bot.reply_to(message, f"❌ Ошибка при сохранении: {str(e)}")
+        
+        # Очищаем состояние
+        del user_states[user_id]
+    
+    def delete_ad(bot, chat_id: int, brand: str, city: str, ad_type: str, index: int):
+        """Удаляет объявление."""
+        try:
+            ad = ad_templates[brand][city][ad_type][index]
+            del ad_templates[brand][city][ad_type][index]
+            
+            # Если список стал пустым, удаляем его
+            if not ad_templates[brand][city][ad_type]:
+                del ad_templates[brand][city][ad_type]
+                
+            # Если город стал пустым, удаляем его
+            if not ad_templates[brand][city]:
+                del ad_templates[brand][city]
+                
+            # Если бренд стал пустым, удаляем его
+            if not ad_templates[brand]:
+                del ad_templates[brand]
+            
+            # Сохраняем в файл
+            save_json_data(AD_TEMPLATES_FILE, ad_templates)
+            
+            preview = ad["text"][:50] + "..." if len(ad["text"]) > 50 else ad["text"]
+            bot.send_message(chat_id, f"🗑️ **Объявление удалено:**\n{preview}", parse_mode="Markdown")
+            
+        except (KeyError, IndexError):
+            bot.send_message(chat_id, "❌ Объявление не найдено или уже удалено.")
+        except Exception as e:
+            bot.send_message(chat_id, f"❌ Ошибка при удалении: {str(e)}")
+
+    # Удаляем старые функции и оставляем только старую обработку для совместимости

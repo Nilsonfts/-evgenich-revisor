@@ -195,9 +195,14 @@ def register_admin_handlers(bot):
             report_lines = ["📊 **Общая сводка по всем сотрудникам**\n_(На основе данных из Google Sheets)_\n"]
             medals = {0: "🥇", 1: "🥈", 2: "🥉"}
             for i, row in summary.iterrows():
-                rank_icon = medals.get(i, f" {i+1}.")
-                report_lines.append(f"*{rank_icon}* {row['Тег Ведущего']} — *Ср. ГС:* `{row['avg_voices']:.1f}` | *Опоздания:* `{row['lateness_percent']:.0f}%` | *Смен:* `{row['total_shifts']}`")
-            bot.send_message(chat_id, "\n".join(report_lines), parse_mode="Markdown")
+                rank_icon = medals.get(i, f"{i+1}.")
+                username = row['Тег Ведущего']
+                avg_voices = row['avg_voices']
+                lateness_percent = row['lateness_percent']
+                total_shifts = row['total_shifts']
+                
+                report_lines.append(f"{rank_icon} {username} — Ср. ГС: {avg_voices:.1f} | Опоздания: {lateness_percent:.0f}% | Смен: {total_shifts}")
+            bot.send_message(chat_id, "\n".join(report_lines))
         except Exception as e:
             logging.error(f"Ошибка анализа Google Sheets для /rating: {e}")
             bot.send_message(chat_id, "Произошла ошибка при выполнении команды.")
@@ -226,7 +231,7 @@ def register_admin_handlers(bot):
             long_pauses = df[df['Макс. пауза (мин)'] > (chat_timeout * 1.5)]
             report_lines = ["🚨 **Анализ проблемных зон**\n"]
             if not low_perf.empty:
-                report_lines.append("*📉 Низкое выполнение плана (<80%):*")
+                report_lines.append("*📉 Низкое выполнение плана (меньше 80%):*")
                 for _, row in low_perf.sort_values(by='Дата', ascending=False).iterrows():
                     report_lines.append(f" - {row.get('Дата', 'N/A')} {row.get('Тег Ведущего', 'N/A')}: *{row['Выполнение (%)']:.0f}%*")
             if not latecomers.empty:
