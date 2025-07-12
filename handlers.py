@@ -423,49 +423,6 @@ def register_handlers(bot):
             phrase = random.choice(soviet_phrases.get("system_messages", {}).get('generic_error', ["Произошла ошибка при выполнении команды."]))
             bot.send_message(chat_id, phrase)
         
-    @bot.message_handler(commands=['problems'])
-    @admin_required(bot)
-    def command_problems(message: types.Message):
-        chat_id = message.chat.id
-        if not pd: return bot.send_message(chat_id, "Модуль для анализа данных (pandas) не загружен.")
-        bot.send_message(chat_id, "🚨 Ищу проблемные зоны в Google Таблице...")
-        worksheet = get_sheet()
-        if not worksheet: return bot.send_message(chat_id, "Не удалось подключиться к Google Таблице.")
-        try:
-            df = pd.DataFrame(worksheet.get_all_records())
-            if df.empty: return bot.send_message(chat_id, "В таблице нет данных.")
-            
-            chat_timeout = chat_configs.get(str(chat_id), {}).get('voice_timeout', VOICE_TIMEOUT_MINUTES)
-            
-            numeric_cols = ['Выполнение (%)', 'Опозданий (шт)', 'Макс. пауза (мин)']
-            for col in numeric_cols:
-                df[col] = df[col].astype(str).str.replace('%', '', regex=False)
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-            df.dropna(subset=numeric_cols, inplace=True)
-            low_perf = df[df['Выполнение (%)'] < 80]
-            latecomers = df[df['Опозданий (шт)'] > 0]
-            long_pauses = df[df['Макс. пауза (мин)'] > (chat_timeout * 1.5)]
-            report_lines = ["🚨 **Анализ проблемных зон**\n"]
-            if not low_perf.empty:
-                report_lines.append("*📉 Низкое выполнение плана (<80%):*")
-                for _, row in low_perf.sort_values(by='Дата', ascending=False).iterrows():
-                    report_lines.append(f" - {row.get('Дата', 'N/A')} {row.get('Тег Ведущего', 'N/A')}: *{row['Выполнение (%)']:.0f}%*")
-            if not latecomers.empty:
-                report_lines.append("\n*⏳ Опоздания с перерывов:*")
-                for _, row in latecomers.sort_values(by='Дата', ascending=False).iterrows():
-                    report_lines.append(f" - {row.get('Дата', 'N/A')} {row.get('Тег Ведущего', 'N/A')}: *{int(row['Опозданий (шт)'])}* раз(а)")
-            if not long_pauses.empty:
-                report_lines.append(f"\n*⏱️ Слишком долгие паузы (дольше {int(chat_timeout*1.5)} мин):*")
-                for _, row in long_pauses.sort_values(by='Дата', ascending=False).iterrows():
-                    report_lines.append(f" - {row.get('Дата', 'N/A')} {row.get('Тег Ведущего', 'N/A')}: макс. пауза *{row['Макс. пауза (мин)']:.0f} мин*")
-            if len(report_lines) == 1:
-                bot.send_message(chat_id, "✅ Проблемных зон по основным критериям не найдено. Отличная работа!")
-            else:
-                bot.send_message(chat_id, "\n".join(report_lines), parse_mode="Markdown")
-        except Exception as e:
-            logging.error(f"Ошибка поиска проблемных зон: {e}")
-            bot.send_message(chat_id, f"Произошла ошибка при анализе: {e}")
-        
     @bot.message_handler(commands=['restart'])
     @admin_required(bot)
     def command_restart(message: types.Message):

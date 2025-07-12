@@ -52,170 +52,39 @@ def register_wizard_handlers(bot):
     @bot.message_handler(commands=['setup_wizard'])
     @admin_required(bot)
     def handle_setup_wizard(message: types.Message):
-        """Начинает пошаговую настройку чата."""
+        """Простая настройка концепции чата."""
         chat_id = message.chat.id
-        user_id = message.from_user.id
-        
-        user_states[user_id] = {"state": "wizard_awaiting_concept", "chat_id": chat_id, "data": {}}
         
         # Создаем клавиатуру с концепциями
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        for concept_id, concept_info in AVAILABLE_CONCEPTS.items():
-            markup.add(types.InlineKeyboardButton(
-                f"{concept_info['name']} - {concept_info['description']}", 
-                callback_data=f"wizard_concept_{concept_id}"
-            ))
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(types.InlineKeyboardButton("РВБ", callback_data="wizard_concept_РВБ"))
+        markup.add(types.InlineKeyboardButton("ЕВГЕНИЧ", callback_data="wizard_concept_ЕВГЕНИЧ"))
+        markup.add(types.InlineKeyboardButton("НЕБАР", callback_data="wizard_concept_НЕБАР"))
+        markup.add(types.InlineKeyboardButton("СПЛЕТНИ", callback_data="wizard_concept_СПЛЕТНИ"))
+        markup.add(types.InlineKeyboardButton("ОРБИТА", callback_data="wizard_concept_ОРБИТА"))
         
         text = ("🧙‍♂️ **Мастер настройки чата**\n\n"
-                "Я помогу настроить чат в 5 шагов. "
-                "Чтобы отменить настройку на любом шаге, просто отправьте /cancel.\n\n"
-                "**Шаг 1 из 5:** Выберите **концепцию** для этого чата:")
+                "Выберите концепцию для этого чата:")
         bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
-
-    def process_wizard_brand_city(message: types.Message, bot):
-        """Шаг 2: Обработка бренда и города."""
-        user_id = message.from_user.id
-        state = user_states.get(user_id, {})
-        if not state or state.get("state") != "wizard_awaiting_brand_city": return
-        if message.text == '/cancel':
-            del user_states[user_id]
-            return bot.reply_to(message, "Настройка отменена.")
-
-        try:
-            brand, city = message.text.split(maxsplit=1)
-            state["data"]["brand"] = brand.lower()
-            state["data"]["city"] = city.lower()
-            
-            state["state"] = "wizard_awaiting_timezone"
-            text = ("✅ **Шаг 3 из 5:** Отлично! Теперь укажите **часовой пояс**.\n"
-                    "Введите смещение от Москвы. *Пример:* `+3` или `-1`")
-            msg = bot.reply_to(message, text, parse_mode="Markdown")
-            bot.register_next_step_handler(msg, process_wizard_timezone, bot)
-        except ValueError:
-            msg = bot.reply_to(message, "❌ **Ошибка.** Пожалуйста, введите два слова: бренд и город. *Пример:* `my-brand moscow`", parse_mode="Markdown")
-            bot.register_next_step_handler(msg, process_wizard_brand_city, bot)
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith("wizard_concept_"))
     def handle_wizard_concept_callback(call):
-        """Обработка выбора концепции в мастере настройки."""
-        user_id = call.from_user.id
-        state = user_states.get(user_id, {})
-        if not state or state.get("state") != "wizard_awaiting_concept":
-            return
-        
-        # Извлекаем ID концепции из коллбек данных
+        """Обработка выбора концепции."""
         concept_id = call.data.replace("wizard_concept_", "")
-        concept_info = AVAILABLE_CONCEPTS.get(concept_id)
+        chat_id = str(call.message.chat.id)
         
-        if not concept_info:
-            bot.answer_callback_query(call.id, "❌ Ошибка: неизвестная концепция")
-            return
+        # Простое сохранение концепции в конфиг чата
+        if chat_id not in chat_configs:
+            chat_configs[chat_id] = {}
         
-        # Сохраняем выбранную концепцию
-        state["data"]["concept"] = concept_id
-        state["state"] = "wizard_awaiting_brand_city"
+        chat_configs[chat_id]["concept"] = concept_id
+        save_json_data(CHAT_CONFIG_FILE, chat_configs)
         
-        # Переходим к следующему шагу
-        text = (f"✅ **Концепция выбрана:** {concept_info['name']}\n\n"
-                "**Шаг 2 из 5:** Введите **бренд** и **город** для этого чата.\n"
-                "*Пример:* `my-brand moscow`")
-        
+        text = f"✅ **Концепция установлена: {concept_id}**\n\nЧат настроен и готов к работе!"
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-        bot.answer_callback_query(call.id, f"Выбрана концепция: {concept_info['name']}")
+        bot.answer_callback_query(call.id, f"Установлена концепция: {concept_id}")
         
-        # Регистрируем следующий шаг
-        bot.register_next_step_handler_by_chat_id(call.message.chat.id, process_wizard_brand_city, bot)
-            
-    def process_wizard_timezone(message: types.Message, bot):
-        """Шаг 3: Обработка часового пояса."""
-        user_id = message.from_user.id
-        state = user_states.get(user_id, {})
-        if not state or state.get("state") != "wizard_awaiting_timezone": return
-        if message.text == '/cancel':
-            del user_states[user_id]
-            return bot.reply_to(message, "Настройка отменена.")
-            
-        offset = message.text.strip()
-        tz_name = TIMEZONE_MAP.get(offset)
-        if not tz_name:
-            msg = bot.reply_to(message, f"❌ **Ошибка.** Неверный формат смещения. Доступные варианты: {list(TIMEZONE_MAP.keys())}\nПопробуйте еще раз.", parse_mode="Markdown")
-            bot.register_next_step_handler(msg, process_wizard_timezone, bot)
-            return
-            
-        state["data"]["timezone"] = tz_name
-        
-        state["state"] = "wizard_awaiting_timing"
-        text = ("✅ **Шаг 4 из 5:** Часовой пояс установлен! Теперь задайте **график смены**.\n"
-                "Введите время начала и конца. *Пример:* `19:00 04:00`")
-        msg = bot.reply_to(message, text, parse_mode="Markdown")
-        bot.register_next_step_handler(msg, process_wizard_timing, bot)
-
-    def process_wizard_timing(message: types.Message, bot):
-        """Шаг 4: Обработка времени смены."""
-        user_id = message.from_user.id
-        state = user_states.get(user_id, {})
-        if not state or state.get("state") != "wizard_awaiting_timing": return
-        if message.text == '/cancel':
-            del user_states[user_id]
-            return bot.reply_to(message, "Настройка отменена.")
-
-        try:
-            start_time_str, end_time_str = message.text.split()
-            datetime.datetime.strptime(start_time_str, '%H:%M')
-            datetime.datetime.strptime(end_time_str, '%H:%M')
-            state["data"]["start_time"] = start_time_str
-            state["data"]["end_time"] = end_time_str
-            
-            state["state"] = "wizard_awaiting_goal"
-            text = ("✅ **Шаг 5 из 5:** График задан! И последнее: укажите **план (норму) ГС** за смену.\n"
-                    "Введите одно число. *Пример:* `25`")
-            msg = bot.reply_to(message, text, parse_mode="Markdown")
-            bot.register_next_step_handler(msg, process_wizard_goal, bot)
-        except (ValueError, IndexError):
-            msg = bot.reply_to(message, "❌ **Ошибка.** Неверный формат. Введите два времени через пробел. *Пример:* `19:00 04:00`", parse_mode="Markdown")
-            bot.register_next_step_handler(msg, process_wizard_timing, bot)
-
-    def process_wizard_goal(message: types.Message, bot):
-        """Шаг 5: Обработка цели и завершение."""
-        user_id = message.from_user.id
-        state = user_states.get(user_id, {})
-        if not state or state.get("state") != "wizard_awaiting_goal": return
-        if message.text == '/cancel':
-            del user_states[user_id]
-            return bot.reply_to(message, "Настройка отменена.")
-            
-        try:
-            goal = int(message.text)
-            if goal <= 0: raise ValueError
-            state["data"]["default_goal"] = goal
-            
-            chat_id_to_configure = str(state["chat_id"])
-            if chat_id_to_configure not in chat_configs:
-                chat_configs[chat_id_to_configure] = {}
-            chat_configs[chat_id_to_configure].update(state["data"])
-            save_json_data(CHAT_CONFIG_FILE, chat_configs)
-            
-            # Получаем информацию о выбранной концепции
-            concept_info = AVAILABLE_CONCEPTS.get(state["data"].get("concept", ""), {})
-            concept_name = concept_info.get("name", "Не указана")
-            
-            final_text = ("🎉 **Настройка завершена!**\n\n"
-                          "Чат успешно настроен со следующими параметрами:\n"
-                          f"  - Концепция: `{concept_name}`\n"
-                          f"  - Бренд: `{state['data']['brand']}`\n"
-                          f"  - Город: `{state['data']['city']}`\n"
-                          f"  - Часовой пояс: `{state['data']['timezone']}`\n"
-                          f"  - График: `{state['data']['start_time']}` - `{state['data']['end_time']}`\n"
-                          f"  - Норма ГС: `{state['data']['default_goal']}`\n\n"
-                          "Бот готов к работе в этом чате!")
-            bot.reply_to(message, final_text, parse_mode="Markdown")
-            
-        except (ValueError, IndexError):
-            msg = bot.reply_to(message, "❌ **Ошибка.** Введите целое положительное число. *Пример:* `25`", parse_mode="Markdown")
-            bot.register_next_step_handler(msg, process_wizard_goal, bot)
-        finally:
-            if user_id in user_states:
-                del user_states[user_id]
+        logging.info(f"Chat {chat_id} configured with concept: {concept_id}")
     
     # ========================================
     #   НОВАЯ СИСТЕМА УПРАВЛЕНИЯ РЕКЛАМОЙ (/ads)
@@ -453,8 +322,9 @@ def register_wizard_handlers(bot):
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
         bot.answer_callback_query(call.id, f"Тип: {ad_type}")
         
-        # Регистрируем следующий шаг
-        bot.register_next_step_handler_by_chat_id(call.message.chat.id, process_ad_text, bot)
+        # Отправляем новое сообщение для следующего шага
+        msg = bot.send_message(call.message.chat.id, "Теперь введите текст объявления:")
+        bot.register_next_step_handler(msg, process_ad_text, bot)
     
     # Обработчики для редактирования и удаления
     @bot.callback_query_handler(func=lambda call: call.data.startswith("ads_edit_"))
