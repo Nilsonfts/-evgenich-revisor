@@ -131,14 +131,18 @@ def handle_user_return(bot, chat_id: int, user_id: int):
         phrase_template = random.choice(
             soviet_phrases.get("system_messages", {}).get('return_late', ["✅ {username}, с возвращением! Вы опоздали на {minutes} мин."])
         )
-        message_text = phrase_template.format(username=f"@{user.username}" if user.username and not user.username.startswith('@') else user.username, minutes=late_minutes)
+        # Используем username как есть, если он уже начинается с @, или добавляем @
+        username_for_message = user.username if user.username.startswith('@') else f"@{user.username}" if user.username else user.username
+        message_text = phrase_template.format(username=username_for_message, minutes=late_minutes)
         bot.send_message(chat_id, message_text)
         
     else:
         phrase_template = random.choice(
             soviet_phrases.get("system_messages", {}).get('return_on_time', ["👍 {username}, с возвращением! Молодец, что вернулись вовремя."])
         )
-        message_text = phrase_template.format(username=f"@{user.username}" if user.username and not user.username.startswith('@') else user.username)
+        # Используем username как есть, если он уже начинается с @, или добавляем @
+        username_for_message = user.username if user.username.startswith('@') else f"@{user.username}" if user.username else user.username
+        message_text = phrase_template.format(username=username_for_message)
         bot.send_message(chat_id, message_text)
         
     save_history_event(chat_id, user_id, user.username, f"Вернулся с перерыва (длительность {break_duration_minutes:.1f} мин)")

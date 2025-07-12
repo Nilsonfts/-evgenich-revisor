@@ -17,6 +17,13 @@ from state_manager import save_state
 from models import UserData
 from database import db  # Импортируем базу данных
 
+def format_username(username: str) -> str:
+    """Форматирует username для отправки в сообщении с правильным @ символом."""
+    if not username:
+        return username
+    # Если уже начинается с @, используем как есть, иначе добавляем @
+    return username if username.startswith('@') else f"@{username}"
+
 # --- Аналитические функции ---
 
 def generate_analytical_summary(user_data: UserData, shift_goal: int, chat_id: int) -> str:
@@ -120,7 +127,7 @@ def check_user_activity(bot):
                 if not last_reminder_str or (now_moscow - datetime.datetime.fromisoformat(last_reminder_str)).total_seconds() > 120:
                     try:
                         phrase = random.choice(soviet_phrases.get('return_demand_hard', ['Пора вернуться к работе!']))
-                        bot.send_message(chat_id, f"@{user_data.username}, {phrase}")
+                        bot.send_message(chat_id, f"{format_username(user_data.username)}, {phrase}")
                         with data_lock:
                             user_data.last_break_reminder_time = now_moscow.isoformat()
                     except Exception as e:
@@ -141,7 +148,7 @@ def check_user_activity(bot):
                 if should_remind:
                     try:
                         phrase = random.choice(soviet_phrases.get('pace_reminder', ['Вы давно не выходили в эфир.']))
-                        bot.send_message(chat_id, f"@{user_data.username}, {phrase} (тишина уже {int(inactive_minutes)} мин.)")
+                        bot.send_message(chat_id, f"{format_username(user_data.username)}, {phrase} (тишина уже {int(inactive_minutes)} мин.)")
                         with data_lock:
                              user_data.last_activity_reminder_time = now_moscow.isoformat()
                     except Exception as e:
