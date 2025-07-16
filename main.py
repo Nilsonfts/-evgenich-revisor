@@ -3,7 +3,10 @@ import telebot
 import threading
 import logging
 import json
+import os
 from dataclasses import asdict
+from flask import Flask
+from datetime import datetime
 
 # === Импорты из внутренних модулей ===
 from config import BOT_TOKEN, CHAT_CONFIG_FILE, AD_TEMPLATES_FILE
@@ -29,6 +32,22 @@ logging.basicConfig(
 # === Инициализация бота ===
 # ИЗМЕНЕНО: Убран аргумент json_encoder, чтобы обеспечить совместимость
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
+
+# Health check для Railway
+health_app = Flask(__name__)
+
+@health_app.route('/health')
+def health_check():
+    """Health check endpoint для Railway."""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "bot_running": True
+    }
+
+def run_health_server():
+    """Запускает health check сервер в отдельном потоке."""
+    health_app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)), debug=False)
 
 # === Загрузка всех данных при старте ===
 def load_all_data():
@@ -75,6 +94,7 @@ if __name__ == "__main__":
     handlers.register_handlers(bot)  # Регистрируем модульные обработчики
     register_admin_panel_handlers(bot)  # Регистрируем админ-панель
     start_background_tasks()
+    threading.Thread(target=run_health_server, daemon=True).start()  # Запускаем health check сервер
     
     logging.info("Бот запущен и готов к работе.")
     bot.polling(none_stop=True)

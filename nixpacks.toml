@@ -1,4 +1,10 @@
-# Файл: nixpacks.toml
+# Railway Nixpacks конфигурация
 
 [phases.setup]
-nixPkgs = ["pkgs.libffi", "pkgs.pkg-config", "pkgs.python3"]
+nixPkgs = ["pkgs.libffi", "pkgs.pkg-config", "pkgs.python311", "pkgs.gcc"]
+
+[phases.build]
+cmds = ["pip install -r requirements.txt"]
+
+[start]
+cmd = "python main.py"
