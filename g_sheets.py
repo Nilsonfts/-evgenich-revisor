@@ -74,7 +74,7 @@ def append_shift_to_google_sheet(bot, chat_id: int, data: ShiftData, analytical_
     ad_counts = Counter(user_data.recognized_ads)
     recognized_ads_str = ", ".join([f"{ad} (x{count})" for ad, count in ad_counts.items()]) or "Нет данных"
 
-    start_date = datetime.datetime.fromisoformat(data.shift_start).strftime('%d.%m.%Y')
+    start_date = datetime.datetime.fromisoformat(data.shift_start_time).strftime('%d.%m.%Y')
         
     row_data = [
         start_date,

@@ -220,7 +220,7 @@ def generate_detailed_report(chat_id: int, data: ShiftData) -> list:
     user_data = data.users.get(main_id)
     if not user_data: return ["Ошибка: нет данных о ведущем."]
 
-    shift_start_dt = datetime.datetime.fromisoformat(data.shift_start)
+    shift_start_dt = datetime.datetime.fromisoformat(data.shift_start_time)
     report_date = shift_start_dt.strftime('%d.%m.%Y')
 
     shift_goal = data.shift_goal
@@ -249,5 +249,88 @@ def generate_detailed_report(chat_id: int, data: ShiftData) -> list:
         report_lines.append("\n---\n**📝 Анализ Контента**")
         for ad, count in ad_counts.items():
             report_lines.append(f"✔️ {ad} (x{count})")
+    
+    # Добавляем маркетинговые инсайты
+    marketing_insights = generate_marketing_insights(user_data, shift_goal)
+    if marketing_insights:
+        report_lines.append(f"\n---\n**💡 Маркетинговые Инсайты**")
+        report_lines.append(marketing_insights)
+    
+    # Добавляем бизнес-рекомендации
+    business_recommendations = generate_business_recommendations(user_data, shift_goal, chat_id)
+    if business_recommendations:
+        report_lines.append(f"\n---\n**🎯 Рекомендации для Бизнеса**")
+        report_lines.append(business_recommendations)
             
     return report_lines
+
+def generate_marketing_insights(user_data: UserData, shift_goal: int) -> str:
+    """Генерирует маркетинговые инсайты для бизнеса."""
+    insights = []
+    
+    # Анализ выполнения плана
+    plan_percent = (user_data.count / shift_goal * 100) if shift_goal > 0 else 0
+    if plan_percent >= 100:
+        insights.append("🎯 План перевыполнен! Отличная работа ведущего.")
+    elif plan_percent >= 80:
+        insights.append("✅ План почти выполнен, хороший результат.")
+    elif plan_percent >= 60:
+        insights.append("⚠️ План выполнен частично, требуется мотивация.")
+    else:
+        insights.append("🔴 План значительно недовыполнен, нужен анализ причин.")
+    
+    # Анализ ритма работы
+    if user_data.voice_deltas:
+        avg_delta = sum(user_data.voice_deltas) / len(user_data.voice_deltas)
+        if avg_delta <= 3:
+            insights.append("⚡ Высокий темп работы - отличная вовлеченность гостей.")
+        elif avg_delta <= 5:
+            insights.append("👍 Оптимальный ритм работы.")
+        else:
+            insights.append("🐌 Медленный ритм - возможно нужно больше активности.")
+    
+    # Анализ перерывов
+    if user_data.breaks_count == 0:
+        insights.append("💪 Работа без перерывов - высокая самоотдача.")
+    elif user_data.breaks_count <= 2:
+        insights.append("☕ Умеренные перерывы - хороший баланс.")
+    else:
+        insights.append("😴 Много перерывов - возможно нужна мотивация.")
+    
+    # Анализ контента
+    if user_data.recognized_ads:
+        ad_diversity = len(set(user_data.recognized_ads))
+        if ad_diversity >= 4:
+            insights.append("🎨 Отличное разнообразие контента!")
+        elif ad_diversity >= 2:
+            insights.append("📝 Хорошее разнообразие рекламных тем.")
+        else:
+            insights.append("🔄 Стоит расширить разнообразие контента.")
+    
+    return " ".join(insights) if insights else "Требуется больше данных для анализа."
+
+def generate_business_recommendations(user_data: UserData, shift_goal: int, chat_id: int) -> str:
+    """Генерирует бизнес-рекомендации."""
+    recommendations = []
+    
+    plan_percent = (user_data.count / shift_goal * 100) if shift_goal > 0 else 0
+    
+    # Рекомендации по результатам
+    if plan_percent < 70:
+        recommendations.append("• Рассмотрите систему мотивации для ведущих")
+        recommendations.append("• Проанализируйте загруженность заведения")
+    elif plan_percent > 120:
+        recommendations.append("• Рассмотрите увеличение целевых показателей")
+        recommendations.append("• Возможно стоит добавить больше ведущих в пиковые часы")
+    
+    # Рекомендации по перерывам
+    if user_data.late_returns > 0:
+        recommendations.append("• Установите четкие правила по времени перерывов")
+        recommendations.append("• Рассмотрите систему напоминаний")
+    
+    # Рекомендации по контенту
+    if len(set(user_data.recognized_ads)) < 3:
+        recommendations.append("• Обновите рекламные материалы")
+        recommendations.append("• Проведите тренинг по разнообразию контента")
+    
+    return "\n".join(recommendations) if recommendations else "Текущие показатели в пределах нормы."

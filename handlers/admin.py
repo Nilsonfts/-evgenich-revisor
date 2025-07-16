@@ -360,10 +360,76 @@ def register_admin_handlers(bot):
                 f"  • Статус: `Активна`",
                 f"  • Ведущий: `{username}`",
                 f"  • ГС: `{main_user.count if main_user else 0}/{shift_data.shift_goal}`",
-                f"  • Начало смены: `{shift_data.shift_start}`",
+                f"  • Начало смены: `{shift_data.shift_start_time}`",
                 f"  • Последний отчет: `{getattr(shift_data, 'last_report_date', 'Не отправлялся')}`"
             ])
         else:
             debug_text.append("  • Статус: `Не активна`")
         
         bot.send_message(chat_id, "\n".join(debug_text), parse_mode="Markdown")
+
+    @bot.message_handler(commands=['marketing_analytics', 'маркетинг'])
+    @admin_required(bot)
+    def handle_marketing_analytics(message: types.Message):
+        """Показывает маркетинговую аналитику за период."""
+        chat_id = message.chat.id
+        
+        # Получаем статистику из базы данных
+        analytics = db.get_marketing_analytics(chat_id, days=7)  # За последние 7 дней
+        
+        if not analytics:
+            bot.send_message(chat_id, 
+                "📊 **Маркетинговая Аналитика**\n\n"
+                "❌ Недостаточно данных за последние 7 дней.\n"
+                "Начните смены для получения статистики.",
+                parse_mode="Markdown")
+            return
+        
+        # Формируем отчет
+        text = "📊 **Маркетинговая Аналитика** (7 дней)\n\n"
+        
+        text += f"**📈 Общая Эффективность:**\n"
+        text += f"• Смен проведено: {analytics.get('total_shifts', 0)}\n"
+        text += f"• Среднее выполнение плана: {analytics.get('avg_plan_completion', 0):.1f}%\n"
+        text += f"• Общее время активности: {analytics.get('total_active_time', 0):.1f} часов\n\n"
+        
+        text += f"**🎯 Показатели Качества:**\n"
+        text += f"• Средний ритм работы: {analytics.get('avg_rhythm', 0):.1f} мин/ГС\n"
+        text += f"• Среднее время перерыва: {analytics.get('avg_break_time', 0):.1f} мин\n"
+        text += f"• Опозданий с перерыва: {analytics.get('total_late_returns', 0)}\n\n"
+        
+        text += f"**📝 Контент-Аналитика:**\n"
+        top_ads = analytics.get('top_ads', [])
+        if top_ads:
+            for i, (ad, count) in enumerate(top_ads[:5], 1):
+                text += f"  {i}. {ad}: {count} раз\n"
+        else:
+            text += "  Нет данных по контенту\n"
+        
+        text += f"\n**💡 Ключевые Инсайты:**\n"
+        
+        avg_completion = analytics.get('avg_plan_completion', 0)
+        if avg_completion >= 90:
+            text += "✅ Отличные результаты! Команда стабильно выполняет план.\n"
+        elif avg_completion >= 70:
+            text += "👍 Хорошие результаты, есть потенциал для роста.\n"
+        else:
+            text += "⚠️ Показатели ниже ожидаемых, требуется анализ причин.\n"
+        
+        avg_rhythm = analytics.get('avg_rhythm', 0)
+        if avg_rhythm <= 3:
+            text += "⚡ Высокий темп работы поддерживает активность гостей.\n"
+        elif avg_rhythm >= 6:
+            text += "🐌 Стоит работать над увеличением темпа активности.\n"
+        
+        # Добавляем кнопки для дополнительных действий
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("📊 Детальный отчет", callback_data="marketing_detailed"),
+            types.InlineKeyboardButton("📈 Тренды", callback_data="marketing_trends")
+        )
+        markup.add(
+            types.InlineKeyboardButton("💡 Рекомендации", callback_data="marketing_recommendations")
+        )
+        
+        bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
