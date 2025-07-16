@@ -75,27 +75,63 @@ def send_end_of_shift_report_for_chat(bot, chat_id: int):
         shift_goal = shift_data_copy.shift_goal
         analytical_conclusion = generate_analytical_summary(main_user_data, shift_goal, chat_id)
         
-        append_shift_to_google_sheet(bot, chat_id, shift_data_copy, analytical_conclusion)
+        # ИСПРАВЛЕНО: Добавляем проверки и детальное логирование
+        logging.info(f"Начинаю формирование отчета для чата {chat_id}. Ведущий: {main_user_data.username}, ГС: {main_user_data.count}/{shift_goal}")
+        
+        # Сохраняем в Google Таблицы
+        try:
+            append_shift_to_google_sheet(bot, chat_id, shift_data_copy, analytical_conclusion)
+            logging.info(f"Данные успешно сохранены в Google Таблицы для чата {chat_id}")
+        except Exception as sheets_error:
+            logging.error(f"Ошибка при сохранении в Google Таблицы для чата {chat_id}: {sheets_error}")
+            # Продолжаем выполнение, так как отчет все равно нужно отправить
         
         report_lines = generate_detailed_report(chat_id, shift_data_copy)
+        if not report_lines:
+            raise ValueError("generate_detailed_report вернул пустой список")
+            
         final_report_text = "\n".join(report_lines)
         final_report_with_recommendation = final_report_text + f"\n\n---\n🧠 **Рекомендация:**\n_{analytical_conclusion}_"
         
         link_markdown = f"[{GOOGLE_SHEET_LINK_TEXT}]({GOOGLE_SHEET_LINK_URL})" if GOOGLE_SHEET_LINK_URL else ""
         main_report_text = f"🏁 Смена завершена!\n\n{final_report_with_recommendation}\n\n{link_markdown}"
         
-        bot.send_message(chat_id, main_report_text, parse_mode="Markdown", disable_web_page_preview=True)
+        # Отправляем отчет в основной чат
+        try:
+            bot.send_message(chat_id, main_report_text, parse_mode="Markdown", disable_web_page_preview=True)
+            logging.info(f"Основной отчет успешно отправлен в чат {chat_id}")
+        except Exception as main_send_error:
+            logging.error(f"Ошибка при отправке основного отчета в чат {chat_id}: {main_send_error}")
+            # Пробуем отправить упрощенную версию
+            try:
+                simple_report = f"🏁 Смена завершена!\n\nВедущий: {main_user_data.username}\nГолосовых: {main_user_data.count}/{shift_goal}"
+                bot.send_message(chat_id, simple_report)
+                logging.info(f"Упрощенный отчет отправлен в чат {chat_id}")
+            except Exception as simple_send_error:
+                logging.error(f"Не удалось отправить даже упрощенный отчет в чат {chat_id}: {simple_send_error}")
 
+        # Отправляем отчет администратору
         if ADMIN_REPORT_CHAT_ID and str(chat_id) != str(ADMIN_REPORT_CHAT_ID):
-            admin_report_header = f"📍 *Отчет из чата: {get_chat_title(bot, chat_id)}*\n"
-            admin_report = f"{admin_report_header}{final_report_with_recommendation}\n\n{link_markdown}"
-            bot.send_message(ADMIN_REPORT_CHAT_ID, admin_report, parse_mode="Markdown", disable_web_page_preview=True)
+            try:
+                admin_report_header = f"📍 *Отчет из чата: {get_chat_title(bot, chat_id)}*\n"
+                admin_report = f"{admin_report_header}{final_report_with_recommendation}\n\n{link_markdown}"
+                bot.send_message(ADMIN_REPORT_CHAT_ID, admin_report, parse_mode="Markdown", disable_web_page_preview=True)
+                logging.info(f"Отчет отправлен администратору для чата {chat_id}")
+            except Exception as admin_send_error:
+                logging.error(f"Ошибка при отправке отчета администратору для чата {chat_id}: {admin_send_error}")
     
         logging.info(f"Данные смены для чата {chat_id} будут сброшены.")
         
+        # ИСПРАВЛЕНО: Сохраняем дату отчета ДО сброса данных смены
         with data_lock:
-            last_report_date = datetime.date.today().isoformat()
-            init_shift_data(chat_id) 
+            today_date = datetime.datetime.now(pytz.timezone('Europe/Moscow')).date().isoformat()
+            if chat_id in chat_data:
+                chat_data[chat_id].last_report_date = today_date
+                logging.info(f"Сохранена дата последнего отчета для чата {chat_id}: {today_date}")
+            
+            # Теперь сбрасываем данные смены, но сохраняем дату отчета
+            last_report_date = chat_data[chat_id].last_report_date if chat_id in chat_data else today_date
+            init_shift_data(chat_id)
             if chat_id in chat_data:
                 chat_data[chat_id].last_report_date = last_report_date
         
@@ -178,19 +214,39 @@ def check_for_shift_end(bot):
         try:
             local_tz = pytz.timezone(tz_name)
             now_local = datetime.datetime.now(local_tz)
+            current_time = now_local.strftime('%H:%M')
             
-            if now_local.strftime('%H:%M') == end_time_str:
+            # ИСПРАВЛЕНО: Диапазонная проверка времени (от времени окончания до часа после)
+            end_hour, end_minute = map(int, end_time_str.split(':'))
+            end_time = datetime.time(end_hour, end_minute)
+            current_time_only = now_local.time()
+            
+            # Проверяем, попадает ли текущее время в диапазон окончания смены
+            time_matches = (
+                end_time <= current_time_only < 
+                datetime.time((end_time.hour + 1) % 24, end_time.minute)
+            )
+            
+            if time_matches:
                 with data_lock:
                     current_shift = chat_data.get(int(chat_id_str))
-                    # Проверяем, что смена активна и что отчет за сегодня еще не отправлялся
-                    if current_shift and current_shift.main_id and (not current_shift.last_report_date or current_shift.last_report_date != now_local.date().isoformat()):
-                        # Выносим вызов за пределы блокировки
+                    # ИСПРАВЛЕНО: Улучшенная проверка даты отчета
+                    today_date = now_local.date().isoformat()
+                    should_send_report = (current_shift and 
+                                        current_shift.main_id and 
+                                        (not hasattr(current_shift, 'last_report_date') or 
+                                         not current_shift.last_report_date or 
+                                         current_shift.last_report_date != today_date))
+                    
+                    if should_send_report:
                         chat_id_to_report = int(chat_id_str)
+                        logging.info(f"Отправляю отчет для чата {chat_id_to_report}: время {current_time}, целевое время {end_time_str}, ТЗ: {tz_name}")
                     else:
                         chat_id_to_report = None
+                        if current_shift and current_shift.main_id:
+                            logging.info(f"Отчет для чата {chat_id_str} уже отправлен сегодня ({today_date})")
                 
                 if chat_id_to_report:
-                    logging.info(f"Наступило время ({end_time_str}) для отчета в чате {chat_id_to_report} (ТЗ: {tz_name}).")
                     send_end_of_shift_report_for_chat(bot, chat_id_to_report)
 
         except Exception as e:

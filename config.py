@@ -26,11 +26,21 @@ GOOGLE_SHEET_LINK_URL = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_K
 GOOGLE_SHEET_LINK_TEXT = "АНАЛИЗ РАБОТЫ ВЕДУЩИХ"
 
 # --- Карта часовых поясов ---
+# Смещения относительно Москвы (UTC+3)
+import pytz
+
 TIMEZONE_MAP = {
-    "-1": "Europe/Kaliningrad", "0": "Europe/Moscow", "+1": "Europe/Samara",
-    "+2": "Asia/Yekaterinburg", "+3": "Asia/Omsk", "+4": "Asia/Krasnoyarsk",
-    "+5": "Asia/Irkutsk", "+6": "Asia/Yakutsk", "+7": "Asia/Vladivostok",
-    "+8": "Asia/Magadan", "+9": "Asia/Kamchatka"
+    "-1": pytz.timezone("Europe/Kaliningrad"),  # UTC+2 (МСК-1)
+    "0": pytz.timezone("Europe/Moscow"),        # UTC+3 (МСК)
+    "+1": pytz.timezone("Europe/Samara"),       # UTC+4 (МСК+1)
+    "+2": pytz.timezone("Asia/Yekaterinburg"),  # UTC+5 (МСК+2) - Пермь, Екатеринбург
+    "+3": pytz.timezone("Asia/Omsk"),           # UTC+6 (МСК+3)
+    "+4": pytz.timezone("Asia/Krasnoyarsk"),    # UTC+7 (МСК+4)
+    "+5": pytz.timezone("Asia/Irkutsk"),        # UTC+8 (МСК+5)
+    "+6": pytz.timezone("Asia/Yakutsk"),        # UTC+9 (МСК+6)
+    "+7": pytz.timezone("Asia/Vladivostok"),    # UTC+10 (МСК+7)
+    "+8": pytz.timezone("Asia/Magadan"),        # UTC+11 (МСК+8)
+    "+9": pytz.timezone("Asia/Kamchatka")       # UTC+12 (МСК+9)
 }
 
 # --- Ключевые слова из phrases.py (для удобства импорта в одном месте) ---

@@ -1,1 +1,29 @@
-{} 
+{
+  "-1001234567890": {
+    "city": "Москва",
+    "timezone": "Europe/Moscow",
+    "timezone_offset": "0",
+    "end_time": "07:00",
+    "default_goal": 15,
+    "concept": "Караоке клуб",
+    "brand": "TestBrand"
+  },
+  "-1001234567891": {
+    "city": "Пермь",
+    "timezone": "Asia/Yekaterinburg",
+    "timezone_offset": "+2",
+    "end_time": "07:00",
+    "default_goal": 12,
+    "concept": "Караоке бар",
+    "brand": "TestBrand"
+  },
+  "-1001234567892": {
+    "city": "Екатеринбург",
+    "timezone": "Asia/Yekaterinburg",
+    "timezone_offset": "+2",
+    "end_time": "06:30",
+    "default_goal": 18,
+    "concept": "Караоке клуб",
+    "brand": "TestBrand"
+  }
+}

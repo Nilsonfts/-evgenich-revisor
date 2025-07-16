@@ -6,6 +6,7 @@ import datetime
 import pandas as pd
 import random
 import time
+import pytz
 from telebot import types
 
 from utils import admin_required, save_json_data, generate_detailed_report, get_username, get_chat_title
@@ -313,3 +314,56 @@ def register_admin_handlers(bot):
                 logging.error(f"Не удалось отправить рассылку в чат {chat_id_str}: {e}")
         
         bot.send_message(message.chat.id, f"✅ Рассылка завершена.\nУспешно отправлено: {sent_count}\nНе удалось отправить: {failed_count}")
+
+    @bot.message_handler(commands=['debug_config'])
+    @admin_required(bot)
+    def command_debug_config(message: types.Message):
+        """Показывает текущую конфигурацию чата для диагностики."""
+        chat_id = message.chat.id
+        chat_id_str = str(chat_id)
+        
+        # Получаем конфигурацию чата
+        config = chat_configs.get(chat_id_str, {})
+        
+        # Получаем данные о текущей смене
+        shift_data = chat_data.get(chat_id)
+        
+        # Получаем текущее время в разных часовых поясах
+        moscow_time = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+        
+        tz_name = config.get('timezone', 'Europe/Moscow')
+        try:
+            local_tz = pytz.timezone(tz_name)
+            local_time = datetime.datetime.now(local_tz)
+        except Exception as e:
+            local_time = f"Ошибка: {e}"
+        
+        debug_text = [
+            "🔍 **Диагностика конфигурации чата**\n",
+            f"**ID чата:** `{chat_id}`",
+            f"**Московское время:** `{moscow_time.strftime('%H:%M:%S %d.%m.%Y')}`",
+            f"**Локальное время:** `{local_time.strftime('%H:%M:%S %d.%m.%Y') if hasattr(local_time, 'strftime') else local_time}`",
+            "",
+            "**Конфигурация:**",
+            f"  • Часовой пояс: `{tz_name}`",
+            f"  • Время окончания: `{config.get('end_time', '04:00 (по умолчанию)')}`",
+            f"  • Концепция: `{config.get('concept', 'Не задана')}`",
+            f"  • Тайм-аут ГС: `{config.get('voice_timeout', VOICE_TIMEOUT_MINUTES)} мин`",
+            "",
+            "**Текущая смена:**"
+        ]
+        
+        if shift_data and shift_data.main_id:
+            main_user = shift_data.users.get(shift_data.main_id)
+            username = main_user.username if main_user else "Неизвестно"
+            debug_text.extend([
+                f"  • Статус: `Активна`",
+                f"  • Ведущий: `{username}`",
+                f"  • ГС: `{main_user.count if main_user else 0}/{shift_data.shift_goal}`",
+                f"  • Начало смены: `{shift_data.shift_start}`",
+                f"  • Последний отчет: `{getattr(shift_data, 'last_report_date', 'Не отправлялся')}`"
+            ])
+        else:
+            debug_text.append("  • Статус: `Не активна`")
+        
+        bot.send_message(chat_id, "\n".join(debug_text), parse_mode="Markdown")
