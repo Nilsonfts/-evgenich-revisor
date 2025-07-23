@@ -79,13 +79,13 @@ def register_user_handlers(bot):
             total_lates = user_df['Опозданий (шт)'].sum()
             
             report_text = (
-                f"⭐️ **Общая статистика для {username}** ⭐️\n\n"
-                f"👑 **Всего смен отработано:** {total_shifts}\n"
-                f"🗣️ **Всего голосовых записано:** {int(total_voices)}\n"
-                f"☕️ **Всего перерывов:** {int(total_breaks)}\n"
-                f"⏳ **Всего опозданий с перерыва:** {int(total_lates)}"
+                f"⭐️ Общая статистика для {username} ⭐️\n\n"
+                f"👑 Всего смен отработано: {total_shifts}\n"
+                f"🗣️ Всего голосовых записано: {int(total_voices)}\n"
+                f"☕️ Всего перерывов: {int(total_breaks)}\n"
+                f"⏳ Всего опозданий с перерыва: {int(total_lates)}"
             )
-            bot.send_message(message.chat.id, report_text, parse_mode="Markdown")
+            bot.send_message(message.chat.id, report_text)
         except Exception as e:
             logging.error(f"Ошибка анализа Google Sheets для /сводка: {e}")
             phrase = random.choice(soviet_phrases.get("system_messages", {}).get('generic_error', ["Произошла ошибка при выполнении команды."]))
