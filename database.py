@@ -342,6 +342,36 @@ class BotDatabase:
                 return {'shifts_count': 0, 'total_voices': 0, 'total_breaks': 0, 'total_lates': 0}
             finally:
                 conn.close()
+
+    def get_user_rating(self, limit: int = 10) -> List[Tuple[str, int, float]]:
+        """Получает рейтинг пользователей по голосовым сообщениям."""
+        with db_lock:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            try:
+                cursor.execute('''
+                    SELECT username,
+                           SUM(count) as total_voices,
+                           COUNT(*) as shifts_count,
+                           AVG(count) as avg_voices
+                    FROM user_shift_data 
+                    WHERE username IS NOT NULL AND username != ''
+                    GROUP BY username
+                    ORDER BY total_voices DESC
+                    LIMIT ?
+                ''', (limit,))
+                
+                results = cursor.fetchall()
+                
+                # Возвращаем (username, total_voices, avg_voices)
+                return [(row[0], row[1], round(row[3], 1)) for row in results]
+                
+            except Exception as e:
+                logging.error(f"Ошибка получения рейтинга пользователей: {e}")
+                return []
+            finally:
+                conn.close()
     
     def cleanup_old_data(self, days_old: int = 30):
         """Очищает старые данные из базы."""

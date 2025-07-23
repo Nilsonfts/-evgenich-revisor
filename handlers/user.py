@@ -133,3 +133,71 @@ def register_user_handlers(bot):
         
         quick_text = get_quick_commands()
         bot.send_message(message.chat.id, quick_text, parse_mode='Markdown')
+
+    @bot.message_handler(commands=['time'])
+    def handle_time(message: types.Message):
+        """Показывает текущее время."""
+        import datetime
+        import pytz
+        
+        moscow_tz = pytz.timezone('Europe/Moscow')
+        now = datetime.datetime.now(moscow_tz)
+        
+        time_text = f"🕐 **Текущее время:** {now.strftime('%H:%M:%S')}\n📅 **Дата:** {now.strftime('%d.%m.%Y')}\n🌍 **Часовой пояс:** Москва (MSK)"
+        bot.send_message(message.chat.id, time_text, parse_mode='Markdown')
+
+    @bot.message_handler(commands=['rating'])
+    def handle_rating(message: types.Message):
+        """Показывает рейтинг всех ведущих."""
+        from database import BotDatabase
+        from config import DATABASE_PATH
+        
+        try:
+            db = BotDatabase(DATABASE_PATH)
+            rating_data = db.get_user_rating()
+            
+            if not rating_data:
+                bot.send_message(message.chat.id, "📊 Данных для рейтинга пока нет.")
+                return
+            
+            rating_text = ["🏆 **РЕЙТИНГ ВЕДУЩИХ** 🏆\n"]
+            
+            for i, (username, total_voices, avg_voices) in enumerate(rating_data[:10], 1):
+                emoji = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+                rating_text.append(f"{emoji} **{username}**: {total_voices} голосовых (ср. {avg_voices})")
+            
+            bot.send_message(message.chat.id, "\n".join(rating_text), parse_mode='Markdown')
+            
+        except Exception as e:
+            bot.send_message(message.chat.id, f"❌ Ошибка получения рейтинга: {e}")
+
+    @bot.message_handler(commands=['status'])
+    def handle_status(message: types.Message):
+        """Показывает статус системы."""
+        from state import chat_data
+        import datetime
+        
+        chat_id = message.chat.id
+        
+        status_text = ["📊 **СТАТУС СИСТЕМЫ**\n"]
+        
+        if chat_id in chat_data and chat_data[chat_id]:
+            shift = chat_data[chat_id]
+            if shift.users:
+                status_text.append("✅ **Смена активна**")
+                status_text.append(f"👥 **Участников:** {len(shift.users)}")
+                
+                for user_data in shift.users.values():
+                    role = getattr(user_data, 'role', 'караоке_ведущий')
+                    from roles import get_role_emoji, get_role_description
+                    emoji = get_role_emoji(role)
+                    desc = get_role_description(role)
+                    status_text.append(f"  {emoji} {user_data.username}: {user_data.count} голосовых ({desc})")
+            else:
+                status_text.append("⚪ **Смена не активна**")
+        else:
+            status_text.append("⚪ **Смена не активна**")
+        
+        status_text.append(f"\n🕐 **Время:** {datetime.datetime.now().strftime('%H:%M:%S')}")
+        
+        bot.send_message(message.chat.id, "\n".join(status_text), parse_mode='Markdown')
