@@ -109,6 +109,106 @@ def register_callback_handlers(bot):
             brand = parts[2]
             show_ad_cities_menu(bot, chat_id, brand)
 
+    # Новые обработчики для системы рекламы
+    @bot.callback_query_handler(func=lambda call: call.data.startswith('ads_'))
+    def handle_ads_callbacks(call: types.CallbackQuery):
+        """Обработчик для новой системы рекламных шаблонов."""
+        if not is_admin(bot, call.from_user.id, call.message.chat.id):
+            return bot.answer_callback_query(call.id, "⛔️ Доступ запрещен!", show_alert=True)
+        
+        bot.answer_callback_query(call.id)
+        chat_id = call.message.chat.id
+        action = call.data[4:]  # убираем "ads_"
+        
+        import json
+        try:
+            with open('ad_templates.json', 'r', encoding='utf-8') as f:
+                ad_templates = json.load(f)
+        except FileNotFoundError:
+            bot.send_message(chat_id, "❌ Файл рекламных шаблонов не найден!")
+            return
+        except Exception as e:
+            bot.send_message(chat_id, f"❌ Ошибка загрузки файла: {e}")
+            return
+        
+        if action == "view_all":
+            # Показать все шаблоны
+            text_lines = ["📋 ВСЕ РЕКЛАМНЫЕ ШАБЛОНЫ\n"]
+            for brand, cities in ad_templates.items():
+                text_lines.append(f"🏢 {brand.upper()}")
+                for city, templates in cities.items():
+                    text_lines.append(f"  📍 {city.capitalize()}: {len(templates)} шаблонов")
+                    for name in templates.keys():
+                        text_lines.append(f"    • {name}")
+                text_lines.append("")
+            
+            if len(text_lines) <= 2:
+                text = "📝 Рекламных шаблонов пока нет"
+            else:
+                text = "\n".join(text_lines)
+            
+            bot.send_message(chat_id, text)
+            
+        elif action == "by_brands":
+            # Показать список брендов
+            markup = types.InlineKeyboardMarkup()
+            for brand in ad_templates.keys():
+                btn = types.InlineKeyboardButton(
+                    f"🏢 {brand.upper()}", 
+                    callback_data=f"ads_brand_{brand}"
+                )
+                markup.add(btn)
+            markup.add(types.InlineKeyboardButton("« Назад", callback_data="ads_back_main"))
+            bot.send_message(chat_id, "🏢 Выберите бренд:", reply_markup=markup)
+            
+        elif action.startswith("brand_"):
+            # Показать города для бренда
+            brand = action[6:]  # убираем "brand_"
+            cities = ad_templates.get(brand, {})
+            
+            if not cities:
+                bot.send_message(chat_id, f"📍 У бренда {brand.upper()} пока нет городов")
+                return
+                
+            markup = types.InlineKeyboardMarkup()
+            for city, templates in cities.items():
+                btn = types.InlineKeyboardButton(
+                    f"📍 {city.capitalize()} ({len(templates)})", 
+                    callback_data=f"ads_city_{brand}_{city}"
+                )
+                markup.add(btn)
+            markup.add(types.InlineKeyboardButton("« К брендам", callback_data="ads_by_brands"))
+            
+            bot.send_message(chat_id, f"📍 Города для {brand.upper()}:", reply_markup=markup)
+            
+        elif action.startswith("city_"):
+            # Показать шаблоны для города
+            parts = action[5:].split('_', 1)  # убираем "city_"
+            brand, city = parts[0], parts[1]
+            templates = ad_templates.get(brand, {}).get(city, {})
+            
+            if not templates:
+                bot.send_message(chat_id, f"📝 У {brand.upper()} в {city.capitalize()} пока нет шаблонов")
+                return
+                
+            text_lines = [f"📝 Шаблоны {brand.upper()} / {city.capitalize()}\n"]
+            for name, content in templates.items():
+                text_lines.append(f"🔹 {name}")
+                # Обрезаем длинный контент для превью
+                preview = content[:100] + "..." if len(content) > 100 else content
+                text_lines.append(f"   {preview}\n")
+            
+            text = "\n".join(text_lines)
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton(f"« К городам {brand.upper()}", callback_data=f"ads_brand_{brand}"))
+            
+            bot.send_message(chat_id, text, reply_markup=markup)
+            
+        elif action == "back_main":
+            # Вернуться к главному меню
+            from .wizards import command_ads_new
+            command_ads_new(call.message)
+
     @bot.callback_query_handler(func=lambda call: True)
     def _debug_all_callbacks(call: types.CallbackQuery):
         """Перехватывает все необработанные колбэки для отладки."""

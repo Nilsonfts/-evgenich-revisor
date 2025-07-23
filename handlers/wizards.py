@@ -265,26 +265,40 @@ def register_wizard_handlers(bot):
     @bot.message_handler(commands=['ads'])
     @admin_required(bot)
     def command_ads_new(message: types.Message):
-        """Новая система управления рекламой с категориями."""
+        """Система управления рекламными шаблонами."""
+        import json
+        try:
+            with open('ad_templates.json', 'r', encoding='utf-8') as f:
+                ad_templates = json.load(f)
+        except FileNotFoundError:
+            bot.send_message(message.chat.id, "❌ Файл рекламных шаблонов не найден!")
+            return
+        except Exception as e:
+            bot.send_message(message.chat.id, f"❌ Ошибка загрузки файла: {e}")
+            return
+        
+        # Подсчет всех шаблонов
+        total_templates = 0
+        for brand_data in ad_templates.values():
+            for city_data in brand_data.values():
+                total_templates += len(city_data)
+        
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
-            types.InlineKeyboardButton("➕ Добавить рекламу", callback_data="ads_add_new"),
-            types.InlineKeyboardButton("📁 Просмотр по категориям", callback_data="ads_view_categories")
+            types.InlineKeyboardButton("📋 Просмотр шаблонов", callback_data="ads_view_all"),
+            types.InlineKeyboardButton("🏢 По брендам", callback_data="ads_by_brands")
         )
         markup.add(
-            types.InlineKeyboardButton("🔍 Поиск рекламы", callback_data="ads_search"),
-            types.InlineKeyboardButton("📊 Статистика", callback_data="ads_stats")
+            types.InlineKeyboardButton("➕ Добавить шаблон", callback_data="ads_add_template"),
+            types.InlineKeyboardButton("�️ Удалить шаблон", callback_data="ads_delete_template")
         )
         
-        text = ("🎯 **Система управления рекламой 2.0**\n\n"
-                "**Новые возможности:**\n"
-                "• Автоматическая категоризация текстов\n"
-                "• Умный поиск по ключевым словам\n"
-                "• Статистика использования\n"
-                "• Простое добавление и редактирование\n\n"
-                "Выберите действие:")
+        text = (f"🎯 Система управления рекламой\n\n"
+                f"📊 Всего шаблонов: {total_templates}\n"
+                f"🏢 Брендов: {len(ad_templates)}\n\n"
+                f"Выберите действие:")
         
-        bot.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=markup)
+        bot.send_message(message.chat.id, text, reply_markup=markup)
     
     def show_ad_categories_menu(bot, chat_id: int):
         """Показать меню выбора категорий."""
