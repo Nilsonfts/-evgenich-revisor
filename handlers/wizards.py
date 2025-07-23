@@ -55,24 +55,150 @@ def register_wizard_handlers(bot):
     @bot.message_handler(commands=['setup_wizard'])
     @admin_required(bot)
     def handle_setup_wizard(message: types.Message):
-        """Простая настройка концепции чата."""
+        """Полная настройка чата в 4 шага."""
         chat_id = message.chat.id
         
+        # Инициализируем временное состояние для мастера
+        if str(chat_id) not in user_states:
+            user_states[str(chat_id)] = {}
+        
+        user_states[str(chat_id)]["setup_step"] = "city"
+        user_states[str(chat_id)]["setup_data"] = {}
+        
         text = ("🧙‍♂️ **Мастер настройки чата**\n\n"
-                "Введите название концепции для этого чата:\n\n"
-                "📋 **Доступные концепции:**\n"
-                "• РВБ\n"
-                "• ЕВГЕНИЧ\n"
-                "• НЕБАР\n"
-                "• СПЛЕТНИ\n"
-                "• ОРБИТА\n\n"
-                "💬 Просто напишите название:")
+                "✅ **Шаг 1 из 4: Укажите город**\n"
+                "Введите название города, где работает заведение.\n"
+                "Пример: Москва, Санкт-Петербург, Казань\n\n"
+                "💬 Введите название города:")
         
         msg = bot.send_message(chat_id, text, parse_mode="Markdown")
-        bot.register_next_step_handler(msg, process_concept_input)
+        bot.register_next_step_handler(msg, process_city_input)
+
+    def process_city_input(message: types.Message):
+        """Обработка ввода города."""
+        chat_id = str(message.chat.id)
+        city = message.text.strip()
+        
+        if len(city) < 2:
+            text = "❌ Название города слишком короткое. Попробуйте еще раз:"
+            msg = bot.send_message(message.chat.id, text)
+            bot.register_next_step_handler(msg, process_city_input)
+            return
+        
+        # Сохраняем город
+        user_states[chat_id]["setup_data"]["city"] = city
+        
+        text = ("✅ **Шаг 2 из 4: Отлично! Теперь укажите часовой пояс.**\n"
+                "Введите смещение от Москвы. Пример: +3 или -1\n\n"
+                "💬 Введите смещение:")
+        
+        msg = bot.send_message(message.chat.id, text, parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_timezone_input)
+
+    def process_timezone_input(message: types.Message):
+        """Обработка ввода часового пояса."""
+        chat_id = str(message.chat.id)
+        timezone_input = message.text.strip()
+        
+        # Проверяем формат (+3, -1, etc.)
+        try:
+            if timezone_input.startswith(('+', '-')):
+                offset = int(timezone_input)
+                if -12 <= offset <= 12:
+                    user_states[chat_id]["setup_data"]["timezone"] = offset
+                    
+                    text = ("✅ **Шаг 3 из 4: Часовой пояс установлен! Теперь задайте график смены.**\n"
+                            "Введите время начала и конца. Пример: 19:00 04:00\n\n"
+                            "💬 Введите график:")
+                    
+                    msg = bot.send_message(message.chat.id, text, parse_mode="Markdown")
+                    bot.register_next_step_handler(msg, process_schedule_input)
+                    return
+        except ValueError:
+            pass
+        
+        text = ("❌ Неверный формат часового пояса.\n"
+                "Введите смещение от Москвы. Пример: +3 или -1\n\n"
+                "💬 Попробуйте еще раз:")
+        
+        msg = bot.send_message(message.chat.id, text, parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_timezone_input)
+
+    def process_schedule_input(message: types.Message):
+        """Обработка ввода графика смены."""
+        chat_id = str(message.chat.id)
+        schedule_input = message.text.strip()
+        
+        # Простая проверка формата времени
+        try:
+            parts = schedule_input.split()
+            if len(parts) == 2:
+                start_time, end_time = parts
+                # Проверяем формат времени (HH:MM)
+                if ':' in start_time and ':' in end_time:
+                    start_hour, start_min = map(int, start_time.split(':'))
+                    end_hour, end_min = map(int, end_time.split(':'))
+                    
+                    if (0 <= start_hour <= 23 and 0 <= start_min <= 59 and 
+                        0 <= end_hour <= 23 and 0 <= end_min <= 59):
+                        
+                        user_states[chat_id]["setup_data"]["schedule"] = {
+                            "start": start_time,
+                            "end": end_time
+                        }
+                        
+                        text = ("✅ **Шаг 4 из 4: График задан! И последнее: укажите план (норму) ГС за смену.**\n"
+                                "Введите одно число. Пример: 25\n\n"
+                                "💬 Введите план:")
+                        
+                        msg = bot.send_message(message.chat.id, text, parse_mode="Markdown")
+                        bot.register_next_step_handler(msg, process_plan_input)
+                        return
+        except ValueError:
+            pass
+        
+        text = ("❌ Неверный формат времени.\n"
+                "Введите время начала и конца. Пример: 19:00 04:00\n\n"
+                "💬 Попробуйте еще раз:")
+        
+        msg = bot.send_message(message.chat.id, text, parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_schedule_input)
+
+    def process_plan_input(message: types.Message):
+        """Обработка ввода плана ГС."""
+        chat_id = str(message.chat.id)
+        plan_input = message.text.strip()
+        
+        try:
+            plan = int(plan_input)
+            if plan > 0:
+                user_states[chat_id]["setup_data"]["plan_voices"] = plan
+                
+                # Теперь запрашиваем концепцию
+                text = ("✅ **Финальный шаг: Выберите концепцию заведения**\n\n"
+                        "📋 **Доступные концепции:**\n"
+                        "• РВБ - романтический вечер для двоих\n"
+                        "• ЕВГЕНИЧ - классическое караоке\n"
+                        "• НЕБАР - неформальный бар\n"
+                        "• СПЛЕТНИ - уютная атмосфера\n"
+                        "• ОРБИТА - космическая тематика\n\n"
+                        "💬 Введите название концепции:")
+                
+                msg = bot.send_message(message.chat.id, text, parse_mode="Markdown")
+                bot.register_next_step_handler(msg, process_concept_input)
+                return
+        except ValueError:
+            pass
+        
+        text = ("❌ Введите корректное число.\n"
+                "Пример: 25\n\n"
+                "💬 Попробуйте еще раз:")
+        
+        msg = bot.send_message(message.chat.id, text, parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_plan_input)
 
     def process_concept_input(message: types.Message):
-        """Обработка ввода концепции."""
+        """Обработка ввода концепции и завершение настройки."""
         concept_input = message.text.strip().upper()
         chat_id = str(message.chat.id)
         
@@ -80,17 +206,45 @@ def register_wizard_handlers(bot):
         available_concepts = ["РВБ", "ЕВГЕНИЧ", "НЕБАР", "СПЛЕТНИ", "ОРБИТА"]
         
         if concept_input in available_concepts:
-            # Сохраняем концепцию
+            # Получаем все собранные данные
+            setup_data = user_states[chat_id]["setup_data"]
+            
+            # Сохраняем полную конфигурацию
             if chat_id not in chat_configs:
                 chat_configs[chat_id] = {}
             
-            chat_configs[chat_id]["concept"] = concept_input
+            chat_configs[chat_id].update({
+                "concept": concept_input,
+                "city": setup_data["city"],
+                "timezone": setup_data["timezone"],
+                "schedule": setup_data["schedule"],
+                "plan_voices": setup_data["plan_voices"],
+                "configured_at": datetime.datetime.now().isoformat()
+            })
+            
             save_json_data(CHAT_CONFIG_FILE, chat_configs)
             
-            text = f"✅ **Концепция установлена: {concept_input}**\n\nЧат настроен и готов к работе!"
+            # Очищаем временное состояние
+            if "setup_step" in user_states[chat_id]:
+                del user_states[chat_id]["setup_step"]
+            if "setup_data" in user_states[chat_id]:
+                del user_states[chat_id]["setup_data"]
+            
+            # Формируем итоговое сообщение
+            schedule = setup_data["schedule"]
+            timezone_str = f"+{setup_data['timezone']}" if setup_data['timezone'] >= 0 else str(setup_data['timezone'])
+            
+            text = (f"🎉 **Настройка завершена!**\n\n"
+                    f"📍 **Город:** {setup_data['city']}\n"
+                    f"🕐 **Часовой пояс:** МСК{timezone_str}\n"
+                    f"📅 **График смены:** {schedule['start']} - {schedule['end']}\n"
+                    f"🎯 **План ГС за смену:** {setup_data['plan_voices']}\n"
+                    f"🏢 **Концепция:** {concept_input}\n\n"
+                    f"✅ Чат готов к работе!")
+            
             bot.send_message(message.chat.id, text, parse_mode="Markdown")
             
-            logging.info(f"Chat {chat_id} configured with concept: {concept_input}")
+            logging.info(f"Chat {chat_id} fully configured: {chat_configs[chat_id]}")
         else:
             text = (f"❌ **Неизвестная концепция: {concept_input}**\n\n"
                     "📋 **Доступные концепции:**\n"
@@ -99,8 +253,10 @@ def register_wizard_handlers(bot):
                     "• НЕБАР\n"
                     "• СПЛЕТНИ\n"
                     "• ОРБИТА\n\n"
-                    "Попробуйте еще раз с командой `/setup_wizard`")
-            bot.send_message(message.chat.id, text, parse_mode="Markdown")
+                    "💬 Попробуйте еще раз:")
+            
+            msg = bot.send_message(message.chat.id, text, parse_mode="Markdown")
+            bot.register_next_step_handler(msg, process_concept_input)
     
     # ========================================
     #   НОВАЯ СИСТЕМА УПРАВЛЕНИЯ РЕКЛАМОЙ (/ads)
