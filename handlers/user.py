@@ -115,3 +115,21 @@ def register_user_handlers(bot):
         from help_system import get_roles_help_text
         roles_text = get_roles_help_text()
         bot.send_message(message.chat.id, roles_text, parse_mode='Markdown')
+    
+    @bot.message_handler(commands=['commands', 'команды'])
+    def handle_all_commands(message: types.Message):
+        """Показывает полный список всех команд."""
+        from utils import is_user_admin
+        from commands_list import get_all_commands_list
+        
+        is_admin = is_user_admin(message.from_user.id, message.chat.id)
+        commands_text = get_all_commands_list(is_admin)
+        bot.send_message(message.chat.id, commands_text, parse_mode='Markdown')
+    
+    @bot.message_handler(commands=['quick', 'быстрые'])
+    def handle_quick_commands(message: types.Message):
+        """Показывает быстрые команды."""
+        from commands_list import get_quick_commands
+        
+        quick_text = get_quick_commands()
+        bot.send_message(message.chat.id, quick_text, parse_mode='Markdown')
