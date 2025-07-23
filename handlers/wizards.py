@@ -9,10 +9,7 @@ from state import user_states, chat_configs, ad_templates
 from config import TIMEZONE_MAP, CHAT_CONFIG_FILE, AD_TEMPLATES_FILE
 
 # Доступные концепции
-AVAILABLE_        markup.add(
-            types.InlineKeyboardButton("➕ Добавить шаблон", callback_data="ads_add_template"),
-            types.InlineKeyboardButton("🗑️ Удалить шаблон", callback_data="ads_delete_template")
-        )EPTS = {
+CONCEPTS = {
     "РВБ": {"name": "РВБ", "description": "Концепция РВБ - романтический вечер для двоих"},
     "НЕБАР": {"name": "НЕБАР", "description": "НЕБАР - неформальный бар с живой атмосферой"},
     "ЕВГЕНИЧ": {"name": "ЕВГЕНИЧ", "description": "ЕВГЕНИЧ - классическое караоке"},
@@ -814,6 +811,8 @@ def register_wizard_handlers(bot):
             markup.add(types.InlineKeyboardButton("« Назад", callback_data="ads_view_categories"))
             
             bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
+        except Exception as e:
+            bot.send_message(chat_id, f"❌ Ошибка показа объявления: {e}")
 
     # Обработчик для добавления новых рекламных шаблонов
     @bot.message_handler(func=lambda message: message.from_user.id in user_states and 
@@ -902,6 +901,3 @@ def register_wizard_handlers(bot):
         
         # Очищаем состояние
         user_states.pop(user_id, None)
-            
-        except (KeyError, IndexError):
-            bot.send_message(chat_id, "❌ Объявление не найдено или было удалено.")
