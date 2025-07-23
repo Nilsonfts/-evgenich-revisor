@@ -58,36 +58,49 @@ def register_wizard_handlers(bot):
         """Простая настройка концепции чата."""
         chat_id = message.chat.id
         
-        # Создаем клавиатуру с концепциями
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(types.InlineKeyboardButton("РВБ", callback_data="wizard_concept_РВБ"))
-        markup.add(types.InlineKeyboardButton("ЕВГЕНИЧ", callback_data="wizard_concept_ЕВГЕНИЧ"))
-        markup.add(types.InlineKeyboardButton("НЕБАР", callback_data="wizard_concept_НЕБАР"))
-        markup.add(types.InlineKeyboardButton("СПЛЕТНИ", callback_data="wizard_concept_СПЛЕТНИ"))
-        markup.add(types.InlineKeyboardButton("ОРБИТА", callback_data="wizard_concept_ОРБИТА"))
-        
         text = ("🧙‍♂️ **Мастер настройки чата**\n\n"
-                "Выберите концепцию для этого чата:")
-        bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
+                "Введите название концепции для этого чата:\n\n"
+                "📋 **Доступные концепции:**\n"
+                "• РВБ\n"
+                "• ЕВГЕНИЧ\n"
+                "• НЕБАР\n"
+                "• СПЛЕТНИ\n"
+                "• ОРБИТА\n\n"
+                "💬 Просто напишите название:")
+        
+        msg = bot.send_message(chat_id, text, parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_concept_input)
 
-    @bot.callback_query_handler(func=lambda call: call.data.startswith("wizard_concept_"))
-    def handle_wizard_concept_callback(call):
-        """Обработка выбора концепции."""
-        concept_id = call.data.replace("wizard_concept_", "")
-        chat_id = str(call.message.chat.id)
+    def process_concept_input(message: types.Message):
+        """Обработка ввода концепции."""
+        concept_input = message.text.strip().upper()
+        chat_id = str(message.chat.id)
         
-        # Простое сохранение концепции в конфиг чата
-        if chat_id not in chat_configs:
-            chat_configs[chat_id] = {}
+        # Список доступных концепций
+        available_concepts = ["РВБ", "ЕВГЕНИЧ", "НЕБАР", "СПЛЕТНИ", "ОРБИТА"]
         
-        chat_configs[chat_id]["concept"] = concept_id
-        save_json_data(CHAT_CONFIG_FILE, chat_configs)
-        
-        text = f"✅ **Концепция установлена: {concept_id}**\n\nЧат настроен и готов к работе!"
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-        bot.answer_callback_query(call.id, f"Установлена концепция: {concept_id}")
-        
-        logging.info(f"Chat {chat_id} configured with concept: {concept_id}")
+        if concept_input in available_concepts:
+            # Сохраняем концепцию
+            if chat_id not in chat_configs:
+                chat_configs[chat_id] = {}
+            
+            chat_configs[chat_id]["concept"] = concept_input
+            save_json_data(CHAT_CONFIG_FILE, chat_configs)
+            
+            text = f"✅ **Концепция установлена: {concept_input}**\n\nЧат настроен и готов к работе!"
+            bot.send_message(message.chat.id, text, parse_mode="Markdown")
+            
+            logging.info(f"Chat {chat_id} configured with concept: {concept_input}")
+        else:
+            text = (f"❌ **Неизвестная концепция: {concept_input}**\n\n"
+                    "📋 **Доступные концепции:**\n"
+                    "• РВБ\n"
+                    "• ЕВГЕНИЧ\n"
+                    "• НЕБАР\n"
+                    "• СПЛЕТНИ\n"
+                    "• ОРБИТА\n\n"
+                    "Попробуйте еще раз с командой `/setup_wizard`")
+            bot.send_message(message.chat.id, text, parse_mode="Markdown")
     
     # ========================================
     #   НОВАЯ СИСТЕМА УПРАВЛЕНИЯ РЕКЛАМОЙ (/ads)

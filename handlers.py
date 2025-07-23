@@ -127,6 +127,11 @@ def register_handlers(bot):
 
             user_data = shift.users[user_id]
             
+            # Если пользователь на перерыве, голосовое сообщение означает возвращение
+            if user_data.on_break:
+                from utils import handle_user_return
+                handle_user_return(bot, chat_id, user_id)
+            
             if not is_new_main and user_data.last_voice_time:
                 last_voice_time = datetime.datetime.fromisoformat(user_data.last_voice_time)
                 time_since_last = (now_moscow - last_voice_time).total_seconds()
@@ -297,8 +302,8 @@ def register_handlers(bot):
             "Посмотреть свою общую статистику за все время.\n",
             "`/передать`",
             "Передать смену другому (нужно ответить на его сообщение).\n",
-            "☕️ Для перерыва просто напишите в чат `перерыв`, `обед` или `отдых`.",
-            "✅ Для возвращения — `вернулся`, `на месте`."
+            "☕️ Для перерыва просто напишите: `перерыв`, `обед`, `отдых`, `кофе`, `устал`, `туалет`, `звонок` и т.д.",
+            "✅ Для возвращения: `вернулся`, `готов`, `работаю`, `на месте`, `поехали` или запишите голосовое."
         ]
         bot.reply_to(message, "\n".join(help_text_lines), parse_mode="Markdown")
 
@@ -467,131 +472,26 @@ def register_handlers(bot):
                 logging.error(f"Не удалось отправить рассылку в чат {chat_id_str}: {e}")
         bot.send_message(message.chat.id, f"✅ Рассылка успешно отправлена в {sent_count} из {total_chats} чатов.")
 
-    @bot.message_handler(commands=['setup_wizard'])
-    @admin_required(bot)
-    def handle_setup_wizard(message: types.Message):
-        """Начинает пошаговую настройку чата."""
-        chat_id = message.chat.id
-        user_id = message.from_user.id
-        
-        user_states[user_id] = {"state": "wizard_awaiting_brand_city", "chat_id": chat_id, "data": {}}
-        
-        text = ("🧙‍♂️ **Мастер настройки чата**\n\n"
-                "Я задам вам 4 вопроса для полной настройки. "
-                "Чтобы отменить настройку на любом шаге, просто отправьте /cancel.\n\n"
-                "**Шаг 1 из 4:** Введите **бренд** и **город** для этого чата.\n"
-                "*Пример:* `my-brand moscow`")
-        msg = bot.send_message(chat_id, text, parse_mode="Markdown")
-        bot.register_next_step_handler(msg, process_wizard_brand_city)
+    # СТАРЫЙ ОБРАБОТЧИК setup_wizard ЗАКОММЕНТИРОВАН - ИСПОЛЬЗУЕТСЯ НОВЫЙ ИЗ wizards.py
+    # @bot.message_handler(commands=['setup_wizard'])
+    # @admin_required(bot)
+    # def handle_setup_wizard(message: types.Message):
+    #     """Начинает пошаговую настройку чата."""
+    #     chat_id = message.chat.id
+    #     user_id = message.from_user.id
+    #     
+    #     user_states[user_id] = {"state": "wizard_awaiting_brand_city", "chat_id": chat_id, "data": {}}
+    #     
+    #     text = ("🧙‍♂️ **Мастер настройки чата**\n\n"
+    #             "Я задам вам 4 вопроса для полной настройки. "
+    #             "Чтобы отменить настройку на любом шаге, просто отправьте /cancel.\n\n"
+    #             "**Шаг 1 из 4:** Введите **бренд** и **город** для этого чата.\n"
+    #             "*Пример:* `my-brand moscow`")
+    #     msg = bot.send_message(chat_id, text, parse_mode="Markdown")
+    #     bot.register_next_step_handler(msg, process_wizard_brand_city)
 
-    def process_wizard_brand_city(message: types.Message):
-        """Шаг 1: Обработка бренда и города."""
-        user_id = message.from_user.id
-        state = user_states.get(user_id, {})
-        if state.get("state") != "wizard_awaiting_brand_city": return
-        if message.text == '/cancel':
-            del user_states[user_id]
-            return bot.reply_to(message, "Настройка отменена.")
-
-        try:
-            brand, city = message.text.split(maxsplit=2)
-            state["data"]["brand"] = brand.lower()
-            state["data"]["city"] = city.lower()
-            
-            state["state"] = "wizard_awaiting_timezone"
-            text = ("✅ **Шаг 2 из 4:** Отлично! Теперь укажите **часовой пояс**.\n"
-                    "Введите смещение от Москвы. *Пример:* `+3` или `-1`")
-            msg = bot.reply_to(message, text, parse_mode="Markdown")
-            bot.register_next_step_handler(msg, process_wizard_timezone)
-        except ValueError:
-            msg = bot.reply_to(message, "❌ **Ошибка.** Пожалуйста, введите два слова: бренд и город. *Пример:* `my-brand moscow`", parse_mode="Markdown")
-            bot.register_next_step_handler(msg, process_wizard_brand_city)
-            
-    def process_wizard_timezone(message: types.Message):
-        """Шаг 2: Обработка часового пояса."""
-        user_id = message.from_user.id
-        state = user_states.get(user_id, {})
-        if state.get("state") != "wizard_awaiting_timezone": return
-        if message.text == '/cancel':
-            del user_states[user_id]
-            return bot.reply_to(message, "Настройка отменена.")
-            
-        offset = message.text.strip()
-        tz_name = TIMEZONE_MAP.get(offset)
-        if not tz_name:
-            msg = bot.reply_to(message, f"❌ **Ошибка.** Неверный формат смещения. Доступные варианты: {list(TIMEZONE_MAP.keys())}\nПопробуйте еще раз.", parse_mode="Markdown")
-            bot.register_next_step_handler(msg, process_wizard_timezone)
-            return
-            
-        state["data"]["timezone"] = tz_name
-        
-        state["state"] = "wizard_awaiting_timing"
-        text = ("✅ **Шаг 3 из 4:** Часовой пояс установлен! Теперь задайте **график смены**.\n"
-                "Введите время начала и конца. *Пример:* `19:00 04:00`")
-        msg = bot.reply_to(message, text, parse_mode="Markdown")
-        bot.register_next_step_handler(msg, process_wizard_timing)
-
-    def process_wizard_timing(message: types.Message):
-        """Шаг 3: Обработка времени смены."""
-        user_id = message.from_user.id
-        state = user_states.get(user_id, {})
-        if state.get("state") != "wizard_awaiting_timing": return
-        if message.text == '/cancel':
-            del user_states[user_id]
-            return bot.reply_to(message, "Настройка отменена.")
-
-        try:
-            start_time_str, end_time_str = message.text.split()
-            datetime.datetime.strptime(start_time_str, '%H:%M')
-            datetime.datetime.strptime(end_time_str, '%H:%M')
-            state["data"]["start_time"] = start_time_str
-            state["data"]["end_time"] = end_time_str
-            
-            state["state"] = "wizard_awaiting_goal"
-            text = ("✅ **Шаг 4 из 4:** График задан! И последнее: укажите **план (норму) ГС** за смену.\n"
-                    "Введите одно число. *Пример:* `25`")
-            msg = bot.reply_to(message, text, parse_mode="Markdown")
-            bot.register_next_step_handler(msg, process_wizard_goal)
-        except (ValueError, IndexError):
-            msg = bot.reply_to(message, "❌ **Ошибка.** Неверный формат. Введите два времени через пробел. *Пример:* `19:00 04:00`", parse_mode="Markdown")
-            bot.register_next_step_handler(msg, process_wizard_timing)
-
-    def process_wizard_goal(message: types.Message):
-        """Шаг 4: Обработка цели и завершение."""
-        user_id = message.from_user.id
-        state = user_states.get(user_id, {})
-        if state.get("state") != "wizard_awaiting_goal": return
-        if message.text == '/cancel':
-            del user_states[user_id]
-            return bot.reply_to(message, "Настройка отменена.")
-            
-        try:
-            goal = int(message.text)
-            if goal <= 0: raise ValueError
-            state["data"]["default_goal"] = goal
-            
-            chat_id_to_configure = str(state["chat_id"])
-            if chat_id_to_configure not in chat_configs:
-                chat_configs[chat_id_to_configure] = {}
-            chat_configs[chat_id_to_configure].update(state["data"])
-            save_json_data(CHAT_CONFIG_FILE, chat_configs)
-            
-            final_text = ("🎉 **Настройка завершена!**\n\n"
-                          "Чат успешно настроен со следующими параметрами:\n"
-                          f"  - Бренд: `{state['data']['brand']}`\n"
-                          f"  - Город: `{state['data']['city']}`\n"
-                          f"  - Часовой пояс: `{state['data']['timezone']}`\n"
-                          f"  - График: `{state['data']['start_time']}` - `{state['data']['end_time']}`\n"
-                          f"  - Норма ГС: `{state['data']['default_goal']}`\n\n"
-                          "Бот готов к работе в этом чате!")
-            bot.reply_to(message, final_text, parse_mode="Markdown")
-            
-        except (ValueError, IndexError):
-            msg = bot.reply_to(message, "❌ **Ошибка.** Введите целое положительное число. *Пример:* `25`", parse_mode="Markdown")
-            bot.register_next_step_handler(msg, process_wizard_goal)
-        finally:
-            if user_id in user_states:
-                del user_states[user_id]
+    # def process_wizard_brand_city(message: types.Message):
+    # ... (остальные функции мастера закомментированы для экономии места)
     
     @bot.message_handler(commands=['ads'])
     @admin_required(bot)

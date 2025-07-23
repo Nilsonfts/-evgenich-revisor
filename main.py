@@ -12,7 +12,6 @@ from datetime import datetime
 from config import BOT_TOKEN, CHAT_CONFIG_FILE, AD_TEMPLATES_FILE
 from state import chat_configs, ad_templates, chat_data, user_history, data_lock
 from utils import load_json_data
-from handlers import register_handlers as register_main_handlers
 import handlers
 from admin_panel import register_admin_panel_handlers
 from scheduler import run_scheduler
@@ -31,6 +30,16 @@ logging.basicConfig(
 
 # === Инициализация бота ===
 # ИЗМЕНЕНО: Убран аргумент json_encoder, чтобы обеспечить совместимость
+# === Инициализация бота с проверкой токена ===
+if BOT_TOKEN == "YOUR_BOT_TOKEN_HERE" or not BOT_TOKEN:
+    logging.error("❌ Токен бота не настроен! Отредактируйте файл .env")
+    exit(1)
+
+# Проверяем формат токена
+if ":" not in BOT_TOKEN:
+    logging.error("❌ Неверный формат токена бота! Токен должен содержать ':'")
+    exit(1)
+
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
 
 # Health check для Railway
@@ -47,7 +56,12 @@ def health_check():
 
 def run_health_server():
     """Запускает health check сервер в отдельном потоке."""
-    health_app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)), debug=False)
+    try:
+        port = int(os.environ.get('PORT', 8081))
+        logging.info(f"Запуск health сервера на порту {port}")
+        health_app.run(host='0.0.0.0', port=port, debug=False)
+    except Exception as e:
+        logging.error(f"Ошибка запуска health сервера: {e}")
 
 # === Загрузка всех данных при старте ===
 def load_all_data():
@@ -90,8 +104,8 @@ def start_background_tasks():
 # === Точка входа ===
 if __name__ == "__main__":
     load_all_data()
-    register_main_handlers(bot)  # Регистрируем основные обработчики
-    handlers.register_handlers(bot)  # Регистрируем модульные обработчики
+    # Сначала регистрируем модульные обработчики из handlers/
+    handlers.register_handlers(bot)  # Регистрируем модульные обработчики (включая wizards)
     register_admin_panel_handlers(bot)  # Регистрируем админ-панель
     start_background_tasks()
     threading.Thread(target=run_health_server, daemon=True).start()  # Запускаем health check сервер

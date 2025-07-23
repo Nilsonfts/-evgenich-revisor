@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./data:/app/data
-      - ./config.py:/app/config.py
+      - ./.env:/app/.env
     environment:
       - PYTHONUNBUFFERED=1
     healthcheck:
