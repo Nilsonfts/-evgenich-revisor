@@ -35,6 +35,12 @@ def register_shift_handlers(bot):
         message.text = '/start МС'
         handle_start(message)
 
+    @bot.message_handler(commands=['startkaraoke', 'стартkaraoke', 'старткараоке'])
+    def handle_startkaraoke(message: types.Message):
+        # Вызываем основной обработчик /start с аргументом караоке
+        message.text = '/start караоке'
+        handle_start(message)
+
     @bot.message_handler(commands=['start', 'старт'])
     def handle_start(message: types.Message):
         chat_id = message.chat.id

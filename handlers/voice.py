@@ -13,6 +13,7 @@ from state import chat_data, ad_templates, chat_configs, data_lock # ДОБАВ�
 from config import VOICE_MIN_DURATION_SECONDS, VOICE_COOLDOWN_SECONDS, OPENAI_API_KEY, BOSS_ID
 from phrases import soviet_phrases
 from models import UserData
+from roles import UserRole, is_weekend_shift, get_default_role_goals, ROLE_EMOJIS, ROLE_DESCRIPTIONS
 
 try:
     import openai
@@ -72,6 +73,63 @@ def analyze_voice_thread(bot, audio_path: str, user_data: UserData, chat_id: int
         if os.path.exists(audio_path):
             os.remove(audio_path)
 
+def auto_assign_weekend_roles(shift, user_id, username, chat_id, bot):
+    """
+    Автоматически назначает роли в выходные дни по порядку голосовых сообщений:
+    Первый записавший голосовое = КАРАОКЕ ВЕДУЩИЙ
+    Второй записавший голосовое = МС
+    """
+    if not is_weekend_shift():
+        return False
+    
+    # Считаем количество пользователей с назначенными ролями
+    users_with_roles = [u for u in shift.users.values() if hasattr(u, 'role') and u.role]
+    
+    if len(users_with_roles) >= 2:
+        return False  # Уже назначены обе роли
+    
+    user_data = shift.users[user_id]
+    
+    # Если роль уже назначена, ничего не делаем
+    if hasattr(user_data, 'role') and user_data.role:
+        return True
+    
+    # Назначаем роль по порядку
+    if len(users_with_roles) == 0:
+        # Первый голосовой = КАРАОКЕ ВЕДУЩИЙ
+        assigned_role = UserRole.KARAOKE_HOST.value
+        role_order = "первый"
+    elif len(users_with_roles) == 1:
+        # Второй голосовой = МС
+        assigned_role = UserRole.MC.value  
+        role_order = "второй"
+    else:
+        return False
+    
+    # Назначаем роль и цель
+    user_data.role = assigned_role
+    day_of_week = datetime.datetime.now().weekday()
+    role_goals = get_default_role_goals(day_of_week)
+    user_data.goal = role_goals.get(assigned_role, 18)
+    
+    # Уведомляем о назначении роли
+    role_emoji = ROLE_EMOJIS.get(assigned_role, "👤")
+    role_desc = ROLE_DESCRIPTIONS.get(assigned_role, assigned_role)
+    
+    success_text = [
+        f"🎉 **ВЫХОДНОЙ ДЕНЬ - АВТОНАЗНАЧЕНИЕ РОЛИ!**",
+        f"",
+        f"{role_emoji} {username} стал **{role_desc}** ({role_order} голосовое)",
+        f"🎯 Цель: {user_data.goal} голосовых сообщений",
+        f"",
+        f"💡 Следующий записавший голосовое станет {'МС' if assigned_role == UserRole.KARAOKE_HOST.value else 'КАРАОКЕ ВЕДУЩИМ'}!"
+    ]
+    
+    bot.send_message(chat_id, "\n".join(success_text))
+    save_history_event(chat_id, user_id, username, f"Автоназначен как {role_desc} в выходной")
+    
+    return True
+
 def register_voice_handlers(bot):
     @bot.message_handler(content_types=['voice'])
     def handle_voice(message: types.Message):
@@ -97,6 +155,9 @@ def register_voice_handlers(bot):
                 shift.main_id = user_id
                 shift.main_username = username
                 is_new_main = True
+
+            # Автоматическое назначение ролей в выходные дни
+            auto_assign_weekend_roles(shift, user_id, username, chat_id, bot)
 
             if shift.main_id == user_id:
                 if is_new_main:

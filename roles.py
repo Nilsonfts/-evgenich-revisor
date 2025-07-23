@@ -38,7 +38,7 @@ DEFAULT_ROLE_CONFIG = {
         "roles": [UserRole.KARAOKE_HOST.value, UserRole.MC.value],
         "goals": {
             UserRole.KARAOKE_HOST.value: 18,
-            UserRole.MC.value: 15
+            UserRole.MC.value: 17
         }
     }
 }
@@ -87,7 +87,7 @@ def get_available_roles_for_day(day_of_week: int):
     return [UserRole.KARAOKE_HOST.value]
 
 def get_default_role_goals(day_of_week: int):
-    """Возвращает цели для ролей по умолчанию (18 голосовых для всех)."""
+    """Возвращает цели для ролей по умолчанию."""
     if day_of_week in [4, 5]:
-        return {UserRole.KARAOKE_HOST.value: 18, UserRole.MC.value: 18}
+        return {UserRole.KARAOKE_HOST.value: 18, UserRole.MC.value: 17}
     return {UserRole.KARAOKE_HOST.value: 18}
