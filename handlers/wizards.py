@@ -9,7 +9,10 @@ from state import user_states, chat_configs, ad_templates
 from config import TIMEZONE_MAP, CHAT_CONFIG_FILE, AD_TEMPLATES_FILE
 
 # Доступные концепции
-AVAILABLE_CONCEPTS = {
+AVAILABLE_        markup.add(
+            types.InlineKeyboardButton("➕ Добавить шаблон", callback_data="ads_add_template"),
+            types.InlineKeyboardButton("🗑️ Удалить шаблон", callback_data="ads_delete_template")
+        )EPTS = {
     "РВБ": {"name": "РВБ", "description": "Концепция РВБ - романтический вечер для двоих"},
     "НЕБАР": {"name": "НЕБАР", "description": "НЕБАР - неформальный бар с живой атмосферой"},
     "ЕВГЕНИЧ": {"name": "ЕВГЕНИЧ", "description": "ЕВГЕНИЧ - классическое караоке"},
@@ -811,6 +814,94 @@ def register_wizard_handlers(bot):
             markup.add(types.InlineKeyboardButton("« Назад", callback_data="ads_view_categories"))
             
             bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
+
+    # Обработчик для добавления новых рекламных шаблонов
+    @bot.message_handler(func=lambda message: message.from_user.id in user_states and 
+                        user_states[message.from_user.id].get("state") == "awaiting_ad_template")
+    def handle_add_ad_template(message: types.Message):
+        """Обработка добавления нового рекламного шаблона."""
+        user_id = message.from_user.id
+        if user_id not in user_states:
+            return
+            
+        state = user_states[user_id]
+        brand = state.get("brand")
+        city = state.get("city")
+        
+        if not brand or not city:
+            bot.send_message(message.chat.id, "❌ Ошибка состояния. Начните заново с /ads")
+            user_states.pop(user_id, None)
+            return
+        
+        # Парсим сообщение (название и текст)
+        lines = message.text.strip().split('\n', 1)
+        if len(lines) < 2:
+            bot.send_message(message.chat.id, 
+                           "❌ Неверный формат! Используйте:\n\n"
+                           "Название шаблона\n"
+                           "Текст шаблона...")
+            return
+        
+        template_name = lines[0].strip()
+        template_text = lines[1].strip()
+        
+        if not template_name or not template_text:
+            bot.send_message(message.chat.id, "❌ Название и текст шаблона не могут быть пустыми!")
+            return
+        
+        # Загрузить текущие шаблоны
+        import json
+        try:
+            with open('ad_templates.json', 'r', encoding='utf-8') as f:
+                ad_templates = json.load(f)
+        except Exception as e:
+            bot.send_message(message.chat.id, f"❌ Ошибка загрузки файла: {e}")
+            user_states.pop(user_id, None)
+            return
+        
+        # Добавить новый шаблон
+        if brand not in ad_templates:
+            ad_templates[brand] = {}
+        if city not in ad_templates[brand]:
+            ad_templates[brand][city] = {}
+            
+        if template_name in ad_templates[brand][city]:
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            markup.add(
+                types.InlineKeyboardButton("✅ Да, заменить", callback_data=f"ads_replace_{brand}_{city}_{template_name}"),
+                types.InlineKeyboardButton("❌ Отмена", callback_data="ads_back_main")
+            )
+            
+            # Временно сохраняем новый текст
+            user_states[user_id]["new_template_text"] = template_text
+            
+            bot.send_message(message.chat.id, 
+                           f"⚠️ Шаблон '{template_name}' уже существует в {brand.upper()} / {city.capitalize()}.\n\n"
+                           f"Заменить существующий шаблон?", 
+                           reply_markup=markup)
+            return
+        
+        # Добавляем новый шаблон
+        ad_templates[brand][city][template_name] = template_text
+        
+        # Сохранить файл
+        try:
+            with open('ad_templates.json', 'w', encoding='utf-8') as f:
+                json.dump(ad_templates, f, ensure_ascii=False, indent=2)
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("« Назад к главному меню", callback_data="ads_back_main"))
+            
+            bot.send_message(message.chat.id, 
+                           f"✅ Шаблон '{template_name}' успешно добавлен в {brand.upper()} / {city.capitalize()}!\n\n"
+                           f"Содержимое:\n{template_text[:200]}{'...' if len(template_text) > 200 else ''}", 
+                           reply_markup=markup)
+            
+        except Exception as e:
+            bot.send_message(message.chat.id, f"❌ Ошибка сохранения файла: {e}")
+        
+        # Очищаем состояние
+        user_states.pop(user_id, None)
             
         except (KeyError, IndexError):
             bot.send_message(chat_id, "❌ Объявление не найдено или было удалено.")
