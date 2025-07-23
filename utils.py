@@ -55,6 +55,16 @@ def is_admin(bot, user_id: int, chat_id: int) -> bool:
         logging.warning(f"Не удалось проверить права админа для user {user_id} в чате {chat_id}: {e}")
         return False
 
+def is_user_admin(user_id: int, chat_id: int, bot=None) -> bool:
+    """Alias для is_admin с другим порядком параметров для совместимости."""
+    # Если bot не передан, попробуем импортировать из main
+    if bot is None:
+        try:
+            from main import bot
+        except ImportError:
+            return user_id == BOSS_ID
+    return is_admin(bot, user_id, chat_id)
+
 def admin_required(bot):
     """Декоратор для проверки прав администратора."""
     def decorator(func):
