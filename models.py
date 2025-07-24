@@ -22,6 +22,10 @@ class UserData:
     last_activity_time: Optional[str] = None
     last_activity_reminder_time: Optional[str] = None
     last_break_reminder_time: Optional[str] = None
+    # Поля для команды /пауза
+    on_pause: bool = False
+    pause_start_time: Optional[str] = None
+    pause_end_time: Optional[str] = None
     recognized_ads: List[str] = field(default_factory=list)
     voice_deltas: List[float] = field(default_factory=list)
     voice_durations: List[int] = field(default_factory=list)

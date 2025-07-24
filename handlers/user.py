@@ -42,6 +42,21 @@ def register_user_handlers(bot):
             f"☕ **Перерывов:** {main_user_data.breaks_count}",
             f"⏳ **Опозданий с перерыва:** {main_user_data.late_returns}"
         ]
+        
+        # Добавляем информацию о паузе, если активна
+        if main_user_data.on_pause:
+            now_moscow = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+            pause_start = datetime.datetime.fromisoformat(main_user_data.pause_start_time)
+            elapsed = (now_moscow - pause_start).total_seconds() / 60
+            remaining = max(0, 40 - elapsed)
+            if remaining > 0:
+                report_lines.append(f"⏸️ **ПАУЗА АКТИВНА:** осталось {int(remaining)} мин")
+            else:
+                # Пауза истекла, автоматически отключаем
+                main_user_data.on_pause = False
+                main_user_data.pause_end_time = now_moscow.isoformat()
+                report_lines.append("⏯️ **Пауза завершена** автоматически!")
+        
         ad_counts = Counter(main_user_data.recognized_ads)
         if ad_counts:
             report_lines.append("\n**📝 Анализ контента:**")
@@ -195,7 +210,23 @@ def register_user_handlers(bot):
                     emoji = get_role_emoji(role)
                     desc = get_role_description(role)
                     safe_username = user_data.username.replace('_', r'\_').replace('*', r'\*').replace('[', r'\[').replace('`', r'\`')
-                    status_text.append(f"  {emoji} {safe_username}: {user_data.count} голосовых ({desc})")
+                    
+                    status_line = f"  {emoji} {safe_username}: {user_data.count} голосовых ({desc})"
+                    
+                    # Добавляем статус паузы, если активна
+                    if user_data.on_pause:
+                        now_moscow = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+                        pause_start = datetime.datetime.fromisoformat(user_data.pause_start_time)
+                        elapsed = (now_moscow - pause_start).total_seconds() / 60
+                        remaining = max(0, 40 - elapsed)
+                        if remaining > 0:
+                            status_line += f" ⏸️ (пауза {int(remaining)} мин)"
+                        else:
+                            # Пауза истекла, автоматически отключаем
+                            user_data.on_pause = False
+                            user_data.pause_end_time = now_moscow.isoformat()
+                    
+                    status_text.append(status_line)
             else:
                 status_text.append("⚪ Смена не активна")
         else:
@@ -204,3 +235,92 @@ def register_user_handlers(bot):
         status_text.append(f"\n🕐 Время: {datetime.datetime.now().strftime('%H:%M:%S')}")
         
         bot.send_message(message.chat.id, "\n".join(status_text))
+
+    @bot.message_handler(commands=['пауза', 'pause'])
+    def handle_pause(message: types.Message):
+        """Активирует паузу на 40 минут для остановки всех счетчиков."""
+        chat_id = message.chat.id
+        user_id = message.from_user.id
+        shift = chat_data.get(chat_id)
+        
+        if not shift or not shift.main_id:
+            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('shift_not_started', ["Смена в этом чате еще не началась."]))
+            return bot.reply_to(message, phrase)
+            
+        if user_id != shift.main_id:
+            main_username = shift.main_username
+            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('only_for_main_user', ["Эту команду может использовать только текущий главный на смене: {main_username}."]))
+            return bot.reply_to(message, phrase.format(main_username=main_username))
+            
+        user_data = shift.users.get(shift.main_id)
+        if not user_data:
+            return bot.reply_to(message, "Не удалось найти ваши данные по текущей смене.")
+
+        # Проверяем, не активна ли уже пауза
+        if user_data.on_pause:
+            now_moscow = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+            pause_start = datetime.datetime.fromisoformat(user_data.pause_start_time)
+            elapsed = (now_moscow - pause_start).total_seconds() / 60
+            remaining = max(0, 40 - elapsed)
+            
+            if remaining > 0:
+                return bot.reply_to(message, f"⏸️ Пауза уже активна! Осталось: {int(remaining)} минут.")
+            else:
+                # Пауза истекла, автоматически отключаем
+                user_data.on_pause = False
+                user_data.pause_end_time = now_moscow.isoformat()
+                bot.reply_to(message, "⏯️ Предыдущая пауза истекла. Активирую новую паузу на 40 минут...")
+        
+        # Активируем паузу
+        now_moscow = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+        user_data.on_pause = True
+        user_data.pause_start_time = now_moscow.isoformat()
+        user_data.pause_end_time = (now_moscow + datetime.timedelta(minutes=40)).isoformat()
+        
+        # Если пользователь был на перерыве, завершаем перерыв
+        if user_data.on_break:
+            user_data.on_break = False
+            
+        bot.reply_to(message, 
+            f"⏸️ **ПАУЗА АКТИВИРОВАНА** на 40 минут!\n\n"
+            f"🚫 Все счетчики остановлены\n"
+            f"⏰ Пауза до: {(now_moscow + datetime.timedelta(minutes=40)).strftime('%H:%M')}\n"
+            f"ℹ️ Для досрочного завершения: `/стоп_пауза`")
+
+    @bot.message_handler(commands=['стоп_пауза', 'stop_pause'])
+    def handle_stop_pause(message: types.Message):
+        """Досрочно завершает активную паузу."""
+        chat_id = message.chat.id
+        user_id = message.from_user.id
+        shift = chat_data.get(chat_id)
+        
+        if not shift or not shift.main_id:
+            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('shift_not_started', ["Смена в этом чате еще не началась."]))
+            return bot.reply_to(message, phrase)
+            
+        if user_id != shift.main_id:
+            main_username = shift.main_username
+            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('only_for_main_user', ["Эту команду может использовать только текущий главный на смене: {main_username}."]))
+            return bot.reply_to(message, phrase.format(main_username=main_username))
+            
+        user_data = shift.users.get(shift.main_id)
+        if not user_data:
+            return bot.reply_to(message, "Не удалось найти ваши данные по текущей смене.")
+
+        # Проверяем, активна ли пауза
+        if not user_data.on_pause:
+            return bot.reply_to(message, "❌ Пауза не активна.")
+        
+        # Завершаем паузу
+        now_moscow = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+        pause_start = datetime.datetime.fromisoformat(user_data.pause_start_time)
+        pause_duration = (now_moscow - pause_start).total_seconds() / 60
+        
+        user_data.on_pause = False
+        user_data.pause_end_time = now_moscow.isoformat()
+        
+        bot.reply_to(message, 
+            f"⏯️ **ПАУЗА ЗАВЕРШЕНА** досрочно!\n\n"
+            f"✅ Все счетчики возобновлены\n"
+            f"📊 Длительность паузы: {int(pause_duration)} минут\n"
+            f"🎯 Можете продолжать работу!")

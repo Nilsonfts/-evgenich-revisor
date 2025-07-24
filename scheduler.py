@@ -178,6 +178,24 @@ def check_user_activity(bot):
             chat_timeout = chat_configs.get(str(chat_id), {}).get('voice_timeout', VOICE_TIMEOUT_MINUTES)
 
             if inactive_minutes > chat_timeout:
+                # Проверяем, не активна ли пауза - если да, не отправляем напоминания
+                if user_data.on_pause:
+                    pause_start = datetime.datetime.fromisoformat(user_data.pause_start_time)
+                    elapsed = (now_moscow - pause_start).total_seconds() / 60
+                    remaining = max(0, 40 - elapsed)
+                    
+                    if remaining <= 0:
+                        # Пауза истекла, автоматически отключаем
+                        user_data.on_pause = False
+                        user_data.pause_end_time = now_moscow.isoformat()
+                        try:
+                            bot.send_message(chat_id, "⏯️ Пауза завершена автоматически! Счетчики возобновлены.")
+                        except Exception as e:
+                            logging.error(f"Не удалось отправить сообщение об окончании паузы в чат {chat_id}: {e}")
+                    else:
+                        # Пауза все еще активна, не отправляем напоминания
+                        continue
+                
                 last_reminder_str = user_data.last_activity_reminder_time
                 should_remind = not last_reminder_str or (now_moscow - datetime.datetime.fromisoformat(last_reminder_str)).total_seconds() > 180
 
