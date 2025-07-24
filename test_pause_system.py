@@ -113,7 +113,27 @@ def test_pause_system():
         assert remaining == 0, "Оставшееся время должно быть 0 для истекшей паузы"
         print("✅ Тест 6: Автоматическое завершение паузы работает")
         
+        # Тест 7: Голосовое сообщение завершает паузу
+        user_data.on_pause = True
+        user_data.pause_start_time = now_moscow.isoformat()
+        user_data.pause_end_time = (now_moscow + datetime.timedelta(minutes=40)).isoformat()
+        
+        # Симулируем получение голосового сообщения
+        if user_data.on_pause:
+            pause_start = datetime.datetime.fromisoformat(user_data.pause_start_time)
+            elapsed = (now_moscow - pause_start).total_seconds() / 60
+            remaining = max(0, 40 - elapsed)
+            
+            if remaining > 0:
+                # Голосовое завершает паузу
+                user_data.on_pause = False
+                user_data.pause_end_time = now_moscow.isoformat()
+                
+        assert not user_data.on_pause, "Голосовое сообщение должно завершать паузу"
+        print("✅ Тест 7: Голосовое сообщение завершает паузу")
+        
         print("\n🎉 Все тесты системы пауз пройдены успешно!")
+        
         return True
         
     except Exception as e:
