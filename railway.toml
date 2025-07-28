@@ -7,5 +7,10 @@ healthcheckTimeout = 300
 restartPolicyType = "on_failure"
 startCommand = "python main.py"
 
+# Настройка Volume для постоянного хранения данных
+[[deploy.volumes]]
+name = "bot-data"
+mountPath = "/app/storage"
+
 [environments.production]
-variables = { }
+variables = { RAILWAY_VOLUME_MOUNT_PATH = "/app/storage" }

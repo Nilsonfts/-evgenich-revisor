@@ -14,8 +14,16 @@ GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
 # --- ID и пути к файлам ---
 BOSS_ID = int(os.getenv("BOSS_ID", "196614680"))
 ADMIN_REPORT_CHAT_ID = int(os.getenv("ADMIN_REPORT_CHAT_ID", "-1002645821302"))
-CHAT_CONFIG_FILE = 'chat_configs.json'
-AD_TEMPLATES_FILE = 'ad_templates.json'
+
+# --- Пути к файлам с поддержкой Railway Volume ---
+# Если есть переменная RAILWAY_VOLUME_MOUNT_PATH, используем её для постоянного хранения
+VOLUME_PATH = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "data")
+DATABASE_PATH = os.path.join(VOLUME_PATH, "bot_database.db")
+CHAT_CONFIG_FILE = os.path.join(VOLUME_PATH, 'chat_configs.json')
+AD_TEMPLATES_FILE = os.path.join(VOLUME_PATH, 'ad_templates.json')
+
+# Создаем директорию для данных, если её нет
+os.makedirs(VOLUME_PATH, exist_ok=True)
 
 # --- Параметры смены ---
 EXPECTED_VOICES_PER_SHIFT = int(os.getenv("EXPECTED_VOICES_PER_SHIFT", "15"))

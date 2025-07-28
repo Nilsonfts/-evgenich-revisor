@@ -14,8 +14,10 @@ db_lock = threading.Lock()
 class BotDatabase:
     """Класс для работы с локальной базой данных SQLite."""
     
-    def __init__(self, db_path: str = "data/bot_database.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = None):
+        # Импортируем здесь, чтобы избежать циклических импортов
+        from config import DATABASE_PATH
+        self.db_path = db_path or DATABASE_PATH
         self.init_database()
     
     def init_database(self):

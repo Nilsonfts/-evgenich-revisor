@@ -9,8 +9,10 @@ from dataclasses import asdict
 from state import data_lock
 from database import db  # Импортируем базу данных
 
-CHAT_DATA_FILE = 'data/chat_data.json'
-USER_HISTORY_FILE = 'data/user_history.json'
+# Используем пути из конфигурации с поддержкой Railway Volume
+from config import VOLUME_PATH
+CHAT_DATA_FILE = os.path.join(VOLUME_PATH, 'chat_data.json')
+USER_HISTORY_FILE = os.path.join(VOLUME_PATH, 'user_history.json')
 
 # ДОБАВЛЕНО: Класс-кодировщик для правильного сохранения dataclasses в JSON
 class EnhancedJSONEncoder(json.JSONEncoder):

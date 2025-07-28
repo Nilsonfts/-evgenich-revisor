@@ -165,10 +165,9 @@ def register_user_handlers(bot):
     def handle_rating(message: types.Message):
         """Показывает рейтинг всех ведущих."""
         from database import BotDatabase
-        from config import DATABASE_PATH
         
         try:
-            db = BotDatabase(DATABASE_PATH)
+            db = BotDatabase()  # Используем дефолтный путь из конфигурации
             rating_data = db.get_user_rating()
             
             if not rating_data:
