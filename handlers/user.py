@@ -324,3 +324,76 @@ def register_user_handlers(bot):
             f"✅ Все счетчики возобновлены\n"
             f"📊 Длительность паузы: {int(pause_duration)} минут\n"
             f"🎯 Можете продолжать работу!")
+
+    @bot.message_handler(commands=['gameover'])
+    def handle_gameover(message: types.Message):
+        """Завершение смены сотрудником (доступно только после окончания рабочего времени)."""
+        chat_id = message.chat.id
+        user_id = message.from_user.id
+        
+        # Проверяем, есть ли активная смена
+        shift = chat_data.get(chat_id)
+        if not shift or not shift.main_id:
+            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('shift_not_started', ["Смена в этом чате еще не началась."]))
+            return bot.reply_to(message, phrase)
+        
+        # Проверяем, что команду использует текущий ведущий
+        if user_id != shift.main_id:
+            main_username = shift.main_username
+            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('only_for_main_user', ["Эту команду может использовать только текущий главный на смене: {main_username}."]))
+            return bot.reply_to(message, phrase.format(main_username=main_username))
+        
+        # Проверяем, что рабочее время смены уже закончилось
+        from state import chat_configs
+        config = chat_configs.get(str(chat_id), {})
+        tz_name = config.get('timezone', 'Europe/Moscow')
+        end_time_str = config.get('end_time', '04:00')
+        
+        try:
+            import pytz
+            local_tz = pytz.timezone(tz_name)
+            now_local = datetime.datetime.now(local_tz)
+            
+            # Парсим время окончания смены
+            end_hour, end_minute = map(int, end_time_str.split(':'))
+            end_time = datetime.time(end_hour, end_minute)
+            current_time_only = now_local.time()
+            
+            # Проверяем, что текущее время больше времени окончания смены
+            # Учитываем переход через полночь (например, смена до 04:00)
+            if end_time.hour < 12:  # Смена заканчивается утром
+                shift_ended = (
+                    current_time_only >= end_time or 
+                    current_time_only >= datetime.time(20, 0)  # Или уже поздний вечер
+                )
+            else:  # Смена заканчивается вечером
+                shift_ended = current_time_only >= end_time
+            
+            if not shift_ended:
+                return bot.reply_to(message, 
+                    f"⏳ **СМЕНА ЕЩЕ НЕ ЗАКОНЧИЛАСЬ**\n\n"
+                    f"🕐 Текущее время: {now_local.strftime('%H:%M')}\n"
+                    f"⏰ Время окончания смены: {end_time_str}\n"
+                    f"🚫 Команда /gameover доступна только после окончания рабочего времени.\n\n"
+                    f"💡 Используйте /check для промежуточного отчета.")
+            
+        except Exception as e:
+            logging.error(f"Ошибка при проверке времени смены для /gameover в чате {chat_id}: {e}")
+            return bot.reply_to(message, "❌ Произошла ошибка при проверке времени смены. Попробуйте позже.")
+        
+        # Если все проверки пройдены, завершаем смену
+        from scheduler import send_end_of_shift_report_for_chat
+        
+        bot.reply_to(message, 
+            f"🏁 **СМЕНА ЗАВЕРШАЕТСЯ ДОСРОЧНО**\n\n" 
+            f"✅ Команда /gameover принята!\n"
+            f"📊 Формирую финальный отчет...\n"
+            f"⏱️ Это может занять несколько секунд.")
+        
+        try:
+            # Вызываем функцию завершения смены
+            send_end_of_shift_report_for_chat(bot, chat_id)
+            logging.info(f"Смена в чате {chat_id} завершена командой /gameover пользователем {user_id}")
+        except Exception as e:
+            logging.error(f"Ошибка при выполнении /gameover в чате {chat_id}: {e}")
+            bot.send_message(chat_id, "❌ Произошла ошибка при завершении смены. Обратитесь к администратору.")
