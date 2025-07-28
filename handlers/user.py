@@ -352,10 +352,13 @@ def register_user_handlers(bot):
             moscow_tz = pytz.timezone('Europe/Moscow')
             local_tz = pytz.timezone(tz_name)
             
-            # Используем UTC время для корректного расчета смещений
-            now_utc = datetime.datetime.utcnow()
-            moscow_offset = moscow_tz.utcoffset(moscow_tz.localize(now_utc.replace(tzinfo=None))).total_seconds() / 3600
-            local_offset = local_tz.utcoffset(local_tz.localize(now_utc.replace(tzinfo=None))).total_seconds() / 3600
+            # Используем текущее время для расчета смещений
+            now = datetime.datetime.now()
+            moscow_time = moscow_tz.localize(now)
+            local_time = local_tz.localize(now)
+            
+            moscow_offset = moscow_time.utcoffset().total_seconds() / 3600
+            local_offset = local_time.utcoffset().total_seconds() / 3600
             offset_diff = local_offset - moscow_offset
             
             if offset_diff == 0:
@@ -367,13 +370,14 @@ def register_user_handlers(bot):
                 
         except Exception as e:
             # Простое определение по названию зоны
-            if 'Yekaterinburg' in tz_name or 'Asia/Yekaterinburg' in tz_name:
+            tz_str = str(tz_name)  # Приводим к строке для безопасности
+            if 'Yekaterinburg' in tz_str or 'Asia/Yekaterinburg' in tz_str:
                 offset_text = "+2 ч от Москвы"
-            elif 'Novosibirsk' in tz_name:
+            elif 'Novosibirsk' in tz_str:
                 offset_text = "+4 ч от Москвы"
-            elif 'Krasnoyarsk' in tz_name:
+            elif 'Krasnoyarsk' in tz_str:
                 offset_text = "+4 ч от Москвы"
-            elif 'Europe/Moscow' in tz_name:
+            elif 'Europe/Moscow' in tz_str:
                 offset_text = "Совпадает с Москвой"
             else:
                 offset_text = "Не определено"
