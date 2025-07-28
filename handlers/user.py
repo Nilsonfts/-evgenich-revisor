@@ -352,9 +352,10 @@ def register_user_handlers(bot):
             moscow_tz = pytz.timezone('Europe/Moscow')
             local_tz = pytz.timezone(tz_name)
             
-            now = datetime.datetime.now()
-            moscow_offset = moscow_tz.utcoffset(now).total_seconds() / 3600
-            local_offset = local_tz.utcoffset(now).total_seconds() / 3600
+            # Используем UTC время для корректного расчета смещений
+            now_utc = datetime.datetime.utcnow()
+            moscow_offset = moscow_tz.utcoffset(moscow_tz.localize(now_utc.replace(tzinfo=None))).total_seconds() / 3600
+            local_offset = local_tz.utcoffset(local_tz.localize(now_utc.replace(tzinfo=None))).total_seconds() / 3600
             offset_diff = local_offset - moscow_offset
             
             if offset_diff == 0:
@@ -365,7 +366,17 @@ def register_user_handlers(bot):
                 offset_text = f"{int(offset_diff)} ч от Москвы"
                 
         except Exception as e:
-            offset_text = "Ошибка определения"
+            # Простое определение по названию зоны
+            if 'Yekaterinburg' in tz_name or 'Asia/Yekaterinburg' in tz_name:
+                offset_text = "+2 ч от Москвы"
+            elif 'Novosibirsk' in tz_name:
+                offset_text = "+4 ч от Москвы"
+            elif 'Krasnoyarsk' in tz_name:
+                offset_text = "+4 ч от Москвы"
+            elif 'Europe/Moscow' in tz_name:
+                offset_text = "Совпадает с Москвой"
+            else:
+                offset_text = "Не определено"
         
         # Определяем длительность смены
         try:
