@@ -324,6 +324,95 @@ def register_user_handlers(bot):
             f"📊 Длительность паузы: {int(pause_duration)} минут\n"
             f"🎯 Можете продолжать работу!")
 
+    @bot.message_handler(commands=['настройки', 'settings'])
+    def handle_chat_settings(message: types.Message):
+        """Показывает настройки текущего чата."""
+        from state import chat_configs
+        import pytz
+        
+        chat_id = message.chat.id
+        config = chat_configs.get(str(chat_id), {})
+        
+        if not config:
+            bot.send_message(chat_id, 
+                "⚙️ **НАСТРОЙКИ ЧАТА**\n\n"
+                "❌ Настройки для данного чата не найдены.\n"
+                "💡 Обратитесь к администратору для настройки чата.")
+            return
+        
+        # Получаем настройки
+        brand = config.get('brand', 'Не указан')
+        city = config.get('city', 'Не указан') 
+        start_time = config.get('start_time', 'Не указано')
+        end_time = config.get('end_time', 'Не указано')
+        tz_name = config.get('timezone', 'Europe/Moscow')
+        
+        # Определяем смещение от Москвы
+        try:
+            moscow_tz = pytz.timezone('Europe/Moscow')
+            local_tz = pytz.timezone(tz_name)
+            
+            now = datetime.datetime.now()
+            moscow_offset = moscow_tz.utcoffset(now).total_seconds() / 3600
+            local_offset = local_tz.utcoffset(now).total_seconds() / 3600
+            offset_diff = local_offset - moscow_offset
+            
+            if offset_diff == 0:
+                offset_text = "Совпадает с Москвой"
+            elif offset_diff > 0:
+                offset_text = f"+{int(offset_diff)} ч от Москвы"
+            else:
+                offset_text = f"{int(offset_diff)} ч от Москвы"
+                
+        except Exception as e:
+            offset_text = "Ошибка определения"
+        
+        # Определяем длительность смены
+        try:
+            start_hour, start_minute = map(int, start_time.split(':'))
+            end_hour, end_minute = map(int, end_time.split(':'))
+            
+            start_total_minutes = start_hour * 60 + start_minute
+            end_total_minutes = end_hour * 60 + end_minute
+            
+            # Учитываем переход через полночь
+            if end_total_minutes < start_total_minutes:
+                end_total_minutes += 24 * 60
+            
+            duration_minutes = end_total_minutes - start_total_minutes
+            duration_hours = duration_minutes // 60
+            duration_mins = duration_minutes % 60
+            
+            if duration_mins == 0:
+                duration_text = f"{duration_hours} часов"
+            else:
+                duration_text = f"{duration_hours} ч {duration_mins} мин"
+                
+        except Exception:
+            duration_text = "Не удалось вычислить"
+        
+        # Формируем красивое сообщение
+        settings_text = [
+            "⚙️ **НАСТРОЙКИ ЧАТА**\n",
+            f"🏢 **Бренд:** {brand}",
+            f"🏙️ **Город:** {city}",
+            f"🕐 **Время смены:** {start_time} - {end_time}",
+            f"⏱️ **Длительность:** {duration_text}",
+            f"🌍 **Часовой пояс:** {tz_name}",
+            f"🔄 **Относительно Москвы:** {offset_text}",
+        ]
+        
+        # Добавляем текущее время в часовом поясе чата
+        try:
+            local_tz = pytz.timezone(tz_name)
+            current_local = datetime.datetime.now(local_tz)
+            settings_text.append(f"\n🕐 **Текущее время здесь:** {current_local.strftime('%H:%M:%S')}")
+            settings_text.append(f"📅 **Дата:** {current_local.strftime('%d.%m.%Y')}")
+        except Exception:
+            pass
+            
+        bot.send_message(chat_id, "\n".join(settings_text), parse_mode="Markdown")
+
     @bot.message_handler(commands=['gameover'])
     def handle_gameover(message: types.Message):
         """Завершение смены сотрудником (доступно только после окончания рабочего времени)."""
