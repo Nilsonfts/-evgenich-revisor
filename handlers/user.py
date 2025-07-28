@@ -341,46 +341,44 @@ def register_user_handlers(bot):
             return
         
         # Получаем настройки
-        brand = config.get('brand', 'Не указан')
+        brand = config.get('concept', 'Не указан')  # concept вместо brand
         city = config.get('city', 'Не указан') 
-        start_time = config.get('start_time', 'Не указано')
-        end_time = config.get('end_time', 'Не указано')
-        tz_name = config.get('timezone', 'Europe/Moscow')
+        
+        # Получаем расписание из schedule объекта
+        schedule = config.get('schedule', {})
+        start_time = schedule.get('start', 'Не указано')
+        end_time = schedule.get('end', 'Не указано')
+        
+        # Получаем timezone как число и конвертируем в строку часового пояса
+        timezone_offset = config.get('timezone', 0)
+        
+        # Определяем строку часового пояса на основе смещения
+        if timezone_offset == 0:
+            tz_name = 'Europe/Moscow'
+            tz_display = 'Московский (МСК)'
+        elif timezone_offset == 2:
+            tz_name = 'Asia/Yekaterinburg'
+            tz_display = 'Екатеринбургский (МСК+2)'
+        elif timezone_offset == 3:
+            tz_name = 'Asia/Omsk'
+            tz_display = 'Омский (МСК+3)'
+        elif timezone_offset == 4:
+            tz_name = 'Asia/Krasnoyarsk'
+            tz_display = 'Красноярский (МСК+4)'
+        elif timezone_offset == 5:
+            tz_name = 'Asia/Irkutsk'
+            tz_display = 'Иркутский (МСК+5)'
+        else:
+            tz_name = 'Europe/Moscow'
+            tz_display = f'МСК{timezone_offset:+d}'
         
         # Определяем смещение от Москвы
-        try:
-            moscow_tz = pytz.timezone('Europe/Moscow')
-            local_tz = pytz.timezone(tz_name)
-            
-            # Используем текущее время для расчета смещений
-            now = datetime.datetime.now()
-            moscow_time = moscow_tz.localize(now)
-            local_time = local_tz.localize(now)
-            
-            moscow_offset = moscow_time.utcoffset().total_seconds() / 3600
-            local_offset = local_time.utcoffset().total_seconds() / 3600
-            offset_diff = local_offset - moscow_offset
-            
-            if offset_diff == 0:
-                offset_text = "Совпадает с Москвой"
-            elif offset_diff > 0:
-                offset_text = f"+{int(offset_diff)} ч от Москвы"
-            else:
-                offset_text = f"{int(offset_diff)} ч от Москвы"
-                
-        except Exception as e:
-            # Простое определение по названию зоны
-            tz_str = str(tz_name)  # Приводим к строке для безопасности
-            if 'Yekaterinburg' in tz_str or 'Asia/Yekaterinburg' in tz_str:
-                offset_text = "+2 ч от Москвы"
-            elif 'Novosibirsk' in tz_str:
-                offset_text = "+4 ч от Москвы"
-            elif 'Krasnoyarsk' in tz_str:
-                offset_text = "+4 ч от Москвы"
-            elif 'Europe/Moscow' in tz_str:
-                offset_text = "Совпадает с Москвой"
-            else:
-                offset_text = "Не определено"
+        if timezone_offset == 0:
+            offset_text = "Совпадает с Москвой"
+        elif timezone_offset > 0:
+            offset_text = f"+{timezone_offset} ч от Москвы"
+        else:
+            offset_text = f"{timezone_offset} ч от Москвы"
         
         # Определяем длительность смены
         try:
@@ -413,7 +411,7 @@ def register_user_handlers(bot):
             f"🏙️ **Город:** {city}",
             f"🕐 **Время смены:** {start_time} - {end_time}",
             f"⏱️ **Длительность:** {duration_text}",
-            f"🌍 **Часовой пояс:** {tz_name}",
+            f"🌍 **Часовой пояс:** {tz_display}",
             f"🔄 **Относительно Москвы:** {offset_text}",
         ]
         
