@@ -14,9 +14,14 @@
 2. **Перейдите во вкладку "Variables"**  
 3. **Скопируйте значение `DATABASE_URL`**
 
-Оно будет выглядеть примерно так:
+В вашем случае это будет:
 ```
-postgresql://postgres:password@containers-us-west-xyz.railway.app:1234/railway
+DATABASE_URL=postgresql://${{PGUSER}}:${{POSTGRES_PASSWORD}}@${{RAILWAY_PRIVATE_DOMAIN}}:5432/${{PGDATABASE}}
+```
+
+Или с подставленными значениями:
+```
+DATABASE_URL=postgresql://postgres:OrsdlksukttTrEsFElyOBkunNcEDHxzq@railway_private_domain:5432/railway
 ```
 
 ### 3. Установите переменные для бота:

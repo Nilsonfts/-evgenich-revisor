@@ -118,10 +118,27 @@ else:
             self.init_database()
         
         def init_database(self):
-            """Создает все таблицы."""
-            with db_lock:
+            """Инициализирует базу данных, создает таблицы."""
+            try:
                 Base.metadata.create_all(bind=self.engine)
-                logging.info("База данных PostgreSQL инициализирована")
+                logging.info("✅ База данных PostgreSQL инициализирована")
+            except Exception as e:
+                logging.error(f"❌ Ошибка инициализации PostgreSQL: {e}")
+                raise
+        
+        def test_connection(self):
+            """Тестирует подключение к базе данных."""
+            try:
+                session = self.get_session()
+                try:
+                    # Простой тест запрос
+                    session.execute("SELECT 1")
+                    return True
+                finally:
+                    session.close()
+            except Exception as e:
+                logging.error(f"Database connection test failed: {e}")
+                raise
         
         def get_session(self) -> Session:
             """Возвращает новую сессию БД."""

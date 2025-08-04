@@ -49,20 +49,48 @@ health_app = Flask(__name__)
 @health_app.route('/health')
 def health_check():
     """Health check endpoint для Railway."""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "bot_running": True
-    }
+    try:
+        # Проверяем подключение к базе данных
+        db_status = "connected"
+        try:
+            # Пытаемся выполнить простой запрос к БД
+            if hasattr(db, 'test_connection'):
+                db.test_connection()
+            else:
+                # Fallback тест
+                db.get_user_stats(123456)  # Простой тест запрос
+        except Exception as db_error:
+            logging.warning(f"Database test failed: {db_error}")
+            db_status = "disconnected"
+        
+        return {
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "bot_running": True,
+            "database": db_status
+        }
+    except Exception as e:
+        logging.error(f"Health check failed: {e}")
+        return {
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }, 503
+
+@health_app.route('/')
+def root_check():
+    """Root endpoint для Railway (на случай если Railway проверяет корень)."""
+    return health_check()
 
 def run_health_server():
     """Запускает health check сервер в отдельном потоке."""
     try:
-        port = int(os.environ.get('PORT', 8081))
-        logging.info(f"Запуск health сервера на порту {port}")
-        health_app.run(host='0.0.0.0', port=port, debug=False)
+        port = int(os.environ.get('PORT', 8000))  # Изменяем на 8000
+        logging.info(f"🌐 Запуск health сервера на порту {port}")
+        health_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
     except Exception as e:
-        logging.error(f"Ошибка запуска health сервера: {e}")
+        logging.error(f"❌ Ошибка запуска health сервера: {e}")
+        raise
 
 # === Загрузка всех данных при старте ===
 def load_all_data():
@@ -104,12 +132,43 @@ def start_background_tasks():
 
 # === Точка входа ===
 if __name__ == "__main__":
-    load_all_data()
-    # Сначала регистрируем модульные обработчики из handlers/
-    handlers.register_handlers(bot)  # Регистрируем модульные обработчики (включая wizards)
-    register_admin_panel_handlers(bot)  # Регистрируем админ-панель
-    start_background_tasks()
-    threading.Thread(target=run_health_server, daemon=True).start()  # Запускаем health check сервер
-    
-    logging.info("Бот запущен и готов к работе.")
-    bot.polling(none_stop=True)
+    try:
+        logging.info("🚀 Начинаем запуск бота ЕВГЕНИЧ...")
+        
+        # Загружаем данные
+        load_all_data()
+        logging.info("✅ Данные загружены")
+        
+        # Тестируем подключение к базе данных
+        try:
+            db.test_connection()
+            logging.info("✅ Подключение к базе данных успешно")
+        except Exception as db_error:
+            logging.warning(f"⚠️ Проблема с базой данных: {db_error}")
+        
+        # Регистрируем обработчики
+        handlers.register_handlers(bot)  # Регистрируем модульные обработчики (включая wizards)
+        register_admin_panel_handlers(bot)  # Регистрируем админ-панель
+        logging.info("✅ Обработчики зарегистрированы")
+        
+        # Запускаем фоновые задачи
+        start_background_tasks()
+        logging.info("✅ Планировщик запущен")
+        
+        # Запускаем health check сервер (ВАЖНО: запускаем первым для Railway)
+        health_thread = threading.Thread(target=run_health_server, daemon=True)
+        health_thread.start()
+        logging.info("✅ Health check сервер запущен")
+        
+        # Даем время серверу запуститься
+        import time
+        time.sleep(2)
+        
+        logging.info("🎯 Бот запущен и готов к работе!")
+        
+        # Запускаем polling бота
+        bot.polling(none_stop=True)
+        
+    except Exception as e:
+        logging.error(f"❌ Критическая ошибка при запуске: {e}")
+        raise

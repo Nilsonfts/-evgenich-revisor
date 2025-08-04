@@ -133,6 +133,20 @@ class BotDatabase:
             
         logging.info("База данных инициализирована успешно")
     
+    def test_connection(self):
+        """Тестирует подключение к базе данных."""
+        try:
+            with db_lock:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute('SELECT 1')
+                result = cursor.fetchone()
+                conn.close()
+                return result is not None
+        except Exception as e:
+            logging.error(f"SQLite connection test failed: {e}")
+            raise
+    
     def save_shift_data(self, chat_id: int, shift_data: ShiftData):
         """Сохраняет данные смены в базу данных."""
         with db_lock:
