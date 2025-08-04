@@ -17,6 +17,7 @@ from admin_panel import register_admin_panel_handlers
 from scheduler import run_scheduler
 from state_manager import load_state
 from models import ShiftData, UserData
+from database_manager import db  # Новый database manager
 
 # === Настройка логирования ===
 logging.basicConfig(

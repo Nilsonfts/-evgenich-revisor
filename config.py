@@ -11,6 +11,21 @@ GOOGLE_SHEET_KEY = os.getenv("GOOGLE_SHEET_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
 
+# --- База данных ---
+# PostgreSQL для Railway или SQLite для локальной разработки
+DATABASE_URL = os.getenv("DATABASE_URL")
+if DATABASE_URL:
+    # Railway PostgreSQL
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    DB_TYPE = "postgresql"
+else:
+    # Локальная SQLite
+    VOLUME_PATH = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "data")
+    os.makedirs(VOLUME_PATH, exist_ok=True)
+    DATABASE_URL = f"sqlite:///{os.path.join(VOLUME_PATH, 'bot_database.db')}"
+    DB_TYPE = "sqlite"
+
 # --- ID и пути к файлам ---
 BOSS_ID = int(os.getenv("BOSS_ID", "196614680"))
 ADMIN_REPORT_CHAT_ID = int(os.getenv("ADMIN_REPORT_CHAT_ID", "-1002645821302"))
@@ -18,12 +33,17 @@ ADMIN_REPORT_CHAT_ID = int(os.getenv("ADMIN_REPORT_CHAT_ID", "-1002645821302"))
 # --- Пути к файлам с поддержкой Railway Volume ---
 # Если есть переменная RAILWAY_VOLUME_MOUNT_PATH, используем её для постоянного хранения
 VOLUME_PATH = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "data")
-DATABASE_PATH = os.path.join(VOLUME_PATH, "bot_database.db")
-CHAT_CONFIG_FILE = os.path.join(VOLUME_PATH, 'chat_configs.json')
-AD_TEMPLATES_FILE = os.path.join(VOLUME_PATH, 'ad_templates.json')
+if not DATABASE_URL or DB_TYPE == "sqlite":
+    DATABASE_PATH = os.path.join(VOLUME_PATH, "bot_database.db")
+    os.makedirs(VOLUME_PATH, exist_ok=True)
+else:
+    DATABASE_PATH = None  # Используем PostgreSQL
 
-# Создаем директорию для данных, если её нет
-os.makedirs(VOLUME_PATH, exist_ok=True)
+CHAT_CONFIG_FILE = os.path.join(VOLUME_PATH if VOLUME_PATH else "data", 'chat_configs.json')
+AD_TEMPLATES_FILE = os.path.join(VOLUME_PATH if VOLUME_PATH else "data", 'ad_templates.json')
+
+# Создаем директорию для конфигурационных файлов
+os.makedirs(os.path.dirname(CHAT_CONFIG_FILE), exist_ok=True)
 
 # --- Параметры смены ---
 EXPECTED_VOICES_PER_SHIFT = int(os.getenv("EXPECTED_VOICES_PER_SHIFT", "15"))
