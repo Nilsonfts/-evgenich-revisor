@@ -1,4 +1,14 @@
 {
+  "-1002310864664": {
+    "city": "Санкт-Петербург", 
+    "timezone": "Europe/Moscow",
+    "timezone_offset": "0",
+    "end_time": "07:00",
+    "default_goal": 15,
+    "concept": "ЕВГЕНИЧ",
+    "brand": "ЕВГЕНИЧ",
+    "voice_timeout": 40
+  },
   "-1001234567890": {
     "city": "Москва",
     "timezone": "Europe/Moscow",

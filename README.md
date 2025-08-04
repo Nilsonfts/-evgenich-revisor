@@ -7,6 +7,17 @@
 [![Telegram](https://img.shields.io/badge/Platform-Telegram-blue.svg)](https://telegram.org)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+## 🚀 БЫСТРЫЙ ДЕПЛОЙ
+
+### Railway Deployment:
+1. Fork этот репозиторий
+2. Подключите к Railway: [![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template)
+3. Установите переменные окружения:
+   - `BOT_TOKEN` - токен Telegram бота
+   - `BOSS_ID` - ваш Telegram ID
+   - `OPENAI_API_KEY` - API ключ OpenAI (опционально)
+4. Deploy!
+
 ## 🌟 ОСОБЕННОСТИ
 
 ### 🎭 **МНОГОРОЛЕВАЯ СИСТЕМА**
