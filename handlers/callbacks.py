@@ -35,8 +35,16 @@ def register_callback_handlers(bot):
         shift.main_id = transfer_info['to_id']
         shift.main_username = transfer_info['to_username']
         
+        # Сохраняем роль передающего и назначаем её принимающему
+        from_role = getattr(shift.users.get(transfer_info['from_id'], None), 'role', 'караоке_ведущий') if transfer_info['from_id'] in shift.users else 'караоке_ведущий'
+        from_goal = getattr(shift.users.get(transfer_info['from_id'], None), 'goal', 15) if transfer_info['from_id'] in shift.users else 15
+        
         if transfer_info['to_id'] not in shift.users:
-            shift.users[transfer_info['to_id']] = init_user_data(transfer_info['to_id'], transfer_info['to_username'])
+            shift.users[transfer_info['to_id']] = init_user_data(transfer_info['to_id'], transfer_info['to_username'], from_role)
+            shift.users[transfer_info['to_id']].goal = from_goal
+        else:
+            shift.users[transfer_info['to_id']].role = from_role
+            shift.users[transfer_info['to_id']].goal = from_goal
 
         del pending_transfers[chat_id]
         
@@ -454,12 +462,12 @@ def register_callback_handlers(bot):
         except Exception:
             pass
         
-        bot.answer_callback_query(call.id, "⏯️ Пауза завершена!")
+        bot.answer_callback_query(call.id, "⏯️ Пауза снята!")
         bot.send_message(chat_id, 
-            f"⏯️ **ПАУЗА ЗАВЕРШЕНА** досрочно!\n\n"
-            f"✅ Все счетчики возобновлены\n"
-            f"📊 Длительность паузы: {int(pause_duration)} минут\n"
-            f"🎯 Можете продолжать работу!",
+            f"⏯️ **ПАУЗА КОНЧИЛАСЬ!** Возвращайся на 'базу' 🗣️\n\n"
+            f"✅ Счётчики снова тикают\n"
+            f"📊 Пауза длилась: {int(pause_duration)} мин\n"
+            f"🎯 Давай, покажи, на что способен! 💪",
             parse_mode="Markdown")
     
     # Обработчики для маркетинговой аналитики (кнопки из admin.py)
@@ -563,7 +571,7 @@ def register_callback_handlers(bot):
             except Exception:
                 pass
             bot.answer_callback_query(call.id, "Отменено")
-            bot.send_message(chat_id, "✅ Завершение смены отменено. Продолжаем работать!")
+            bot.send_message(chat_id, "✅ Завершение отменено. Продолжаем 'гойду'! ⚔️")
             
         elif action == "confirm_restart":
             if not is_admin(bot, user_id, chat_id):
@@ -574,8 +582,8 @@ def register_callback_handlers(bot):
                 pass
             from utils import init_shift_data
             init_shift_data(chat_id)
-            bot.answer_callback_query(call.id, "🔄 Смена сброшена!")
-            bot.send_message(chat_id, "🔄 Смена успешно сброшена администратором!")
+            bot.answer_callback_query(call.id, "🔄 Сбросил! 'Гойда' сначала!")
+            bot.send_message(chat_id, "🔄 Смена сброшена админом! Все счётчики на нуле. 'Таков путь'. 💪")
             logging.info(f"Смена сброшена в чате {chat_id} админом {user_id}")
             
         elif action == "confirm_restart_cancel":
@@ -593,8 +601,8 @@ def register_callback_handlers(bot):
             except Exception:
                 pass
             from scheduler import send_end_of_shift_report_for_chat
-            bot.answer_callback_query(call.id, "📝 Формирую отчет...")
-            bot.send_message(chat_id, "⏳ Формирую финальный отчет досрочно...")
+            bot.answer_callback_query(call.id, "📝 Сейчас сделаем...")
+            bot.send_message(chat_id, "⏳ Формирую отчёт... 'Алгоритмы считают ваши провалы'. 🧠")
             send_end_of_shift_report_for_chat(bot, chat_id)
             
         elif action == "confirm_report_cancel":
@@ -620,18 +628,34 @@ def register_callback_handlers(bot):
         # Создаем фейковое сообщение для handle_start
         bot.answer_callback_query(call.id, f"Выбрана роль: {role}")
         
-        # Импортируем и вызываем напрямую start-логику
-        from roles import UserRole
+        # Формируем фейковое сообщение со специальным текстом для handle_start
         role_map = {
             'karaoke': 'караоке',
             'mc': 'МС'
         }
         role_text = role_map.get(role, role)
         
-        # Отправляем команду /start с ролью от имени пользователя
-        # Через сохранение selected role в user_states
-        user_states[user_id] = {'selected_role': role_text}
-        bot.send_message(chat_id, f"✅ Теперь отправьте команду: `/start {role_text}`", parse_mode="Markdown")
+        # Создаём фейковое сообщение и вызываем handle_start напрямую
+        try:
+            fake_msg = types.Message(
+                message_id=call.message.message_id,
+                from_user=call.from_user,
+                date=None,
+                chat=call.message.chat,
+                content_type='text',
+                options={'text': f'/start {role_text}'},
+                json_string=''
+            )
+            fake_msg.text = f'/start {role_text}'
+            # Находим обработчик /start и вызываем
+            from .shift import register_shift_handlers
+            # Просто отправляем команду в чат — бот перехватит
+            bot.send_message(chat_id, f"🎭 {call.from_user.first_name} выбрал роль: *{role_text}*", parse_mode="Markdown")
+            # Уведомляем пользователя отправить команду (единственный надежный способ)
+            bot.send_message(chat_id, f"👉 Отправьте: `/start {role_text}`", parse_mode="Markdown")
+        except Exception as e:
+            logging.error(f"Ошибка при выборе роли: {e}")
+            bot.send_message(chat_id, f"👉 Отправьте: `/start {role_text}`", parse_mode="Markdown")
     
     # Обработчик кнопки "Отклонить передачу"
     @bot.callback_query_handler(func=lambda call: call.data.startswith('transfer_decline_'))
@@ -659,6 +683,6 @@ def register_callback_handlers(bot):
         
         bot.answer_callback_query(call.id, "Передача отклонена")
         bot.send_message(chat_id, 
-            f"❌ {transfer_info['to_username']} отклонил(а) передачу смены от {transfer_info['from_username']}.")
+            f"❌ {transfer_info['to_username']} сказал(a) 'ухади' предложению от {transfer_info['from_username']}. 🚪 Смена остаётся на месте!")
         save_history_event(chat_id, user_id, transfer_info['to_username'], 
             f"Отклонил передачу смены от {transfer_info['from_username']}")

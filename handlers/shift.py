@@ -33,8 +33,8 @@ def register_shift_handlers(bot):
         )
         bot.send_message(chat_id, 
             "🔄 **Сброс смены**\n\n"
-            "⚠️ Это действие необратимо! Все данные текущей смены будут потеряны.\n"
-            "Вы уверены?",
+            "⚠️ Анус, это необратимо! Все данные текущей смены улетят, как 'бобёр' в закат.\n"
+            "Ты уверен, босс?",
             parse_mode="Markdown", reply_markup=markup)
 
     @bot.message_handler(commands=['startmc', 'стартmc'])
@@ -58,18 +58,21 @@ def register_shift_handlers(bot):
         # В личных сообщениях — показываем приветствие
         if message.chat.type == 'private':
             welcome_text = [
-                "👋 **Привет! Я ЕВГЕНИЧ — бот-ревизор для караоке-баров!**\n",
-                "🎤 Я помогаю отслеживать работу ведущих на сменах:\n",
-                "• 📊 Считаю голосовые сообщения",
-                "• ⏱️ Контролирую перерывы",
-                "• 📝 Формирую отчеты",
-                "• 🎭 Поддерживаю систему ролей\n",
-                "**Как начать:**",
-                "1️⃣ Добавьте меня в рабочий чат",
-                "2️⃣ Сделайте меня администратором",
-                "3️⃣ Запустите `/setup_wizard` для настройки",
-                "4️⃣ Начните смену командой `/start`\n",
-                "📖 Используйте /help для полной справки.",
+                "� **Йо! Я ЕВГЕНИЧ — главный скуф-ревизор караоке-баров!**\n",
+                "🎤 Что я умею (и делаю это лучше тебя):\n",
+                "• 📊 Считаю голосовые — каждый чих на учёте",
+                "• ⏱️ Контролирую перерывы — не засиживайся",
+                "• 📝 Формирую отчёты — от них не спрячешься",
+                "• 🎭 Управляю ролями — караоке и МС",
+                "• 🐺 Мотивирую работать — в стиле 'сигма-босс'\n",
+                "**Как впустить меня в свою жизнь:**",
+                "1️⃣ Кинь меня в рабочий чат",
+                "2️⃣ Дай права админа (я заслужил)",
+                "3️⃣ Запусти `/setup_wizard` — я всё настрою",
+                "4️⃣ Начни смену: `/start` — и понеслась!\n",
+                "📖 `/help` — если вдруг заблудился.",
+                "💡 `/admin` — если ты тут главный.\n",
+                "_Евгенич не спит. Евгенич наблюдает._ 👁️",
             ]
             return bot.send_message(chat_id, "\n".join(welcome_text), parse_mode="Markdown")
         
@@ -208,7 +211,7 @@ def register_shift_handlers(bot):
             shift.role_goals = role_goals
         
         # Устанавливаем цель для пользователя
-        user_goal = role_goals.get(assigned_role, 18)
+        user_goal = role_goals.get(assigned_role, 15)
         shift.users[from_user.id].goal = user_goal
         
         # Для совместимости оставляем main_id (будет первый заступивший)
@@ -219,10 +222,14 @@ def register_shift_handlers(bot):
         role_emoji = ROLE_EMOJIS.get(assigned_role, "👤")
         role_desc = ROLE_DESCRIPTIONS.get(assigned_role, assigned_role)
         
+        # Используем креативные фразы из phrases.py
+        phrase = random.choice(soviet_phrases.get("system_messages", {}).get('start_shift_success', ["{username}, вы заступили на смену!"]))
+        phrase_text = phrase.format(username=username)
+        
         success_text = [
-            f"🎉 {username}, вы заступили на смену!",
-            f"🎭 Роль: {role_emoji} {role_desc}",
-            f"🎯 Цель: {user_goal} голосовых сообщений",
+            phrase_text,
+            f"\n🎭 Роль: {role_emoji} {role_desc}",
+            f"🎯 Цель: {user_goal} голосовых",
             f"📅 Тип дня: {current_day_type.value}"
         ]
         
@@ -235,7 +242,7 @@ def register_shift_handlers(bot):
         except Exception as e:
             logging.error(f"Ошибка сохранения смены в БД: {e}")
 
-    @bot.message_handler(func=lambda m: m.text and any(word in m.text.lower().split() for word in BREAK_KEYWORDS))
+    @bot.message_handler(func=lambda m: m.text and any(word in m.text.lower() for word in BREAK_KEYWORDS))
     def handle_break_request(message: types.Message):
         chat_id = message.chat.id
         user_id = message.from_user.id
@@ -268,7 +275,7 @@ def register_shift_handlers(bot):
         response_phrase = random.choice(soviet_phrases.get('break_acknowledgement', ['Перерыв начат.']))
         bot.reply_to(message, f"{response_phrase} на {BREAK_DURATION_MINUTES} минут.")
 
-    @bot.message_handler(func=lambda m: m.text and any(word in m.text.lower().split() for word in RETURN_CONFIRM_WORDS))
+    @bot.message_handler(func=lambda m: m.text and any(word in m.text.lower() for word in RETURN_CONFIRM_WORDS))
     def handle_return_message(message: types.Message):
         chat_id = message.chat.id
         user_id = message.from_user.id
@@ -298,8 +305,8 @@ def register_shift_handlers(bot):
         from_user = message.from_user
         shift = chat_data.get(chat_id)
         
-        if not shift or shift.main_id != from_user.id:
-            return bot.reply_to(message, "Только текущий главный на смене может передать ее.")
+        if not shift or from_user.id not in shift.users:
+            return bot.reply_to(message, "Только участник текущей смены может передать её.")
 
         if not message.reply_to_message:
             return bot.reply_to(message, "Чтобы передать смену, ответьте этой командой на любое сообщение пользователя, которому вы хотите ее передать.")

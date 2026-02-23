@@ -44,9 +44,10 @@ def register_user_handlers(bot):
         role_desc = get_role_description(role)
         
         report_lines = [
-            f"📋 *Промежуточный отчет* ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})",
+            f"📋 *Промежуточный отчёт* ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})",
             f"🎭 **Роль:** {role_emoji} {role_desc}",
             f"🗣️ **Голосовых:** {user_data.count} из {shift_goal} ({plan_percent:.0f}%)",
+            f"{'\n🌟 _План выполнен! Ты сегодня сигма!_ 🐺' if plan_percent >= 100 else ''}",
             f"☕ **Перерывов:** {user_data.breaks_count}",
             f"⏳ **Опозданий с перерыва:** {user_data.late_returns}"
         ]
@@ -142,11 +143,11 @@ def register_user_handlers(bot):
     @bot.message_handler(commands=['commands', 'команды'])
     def handle_all_commands(message: types.Message):
         """Показывает полный список всех команд."""
-        from utils import is_user_admin
         from commands_list import get_all_commands_list
+        from utils import is_admin as check_admin
         
-        is_admin = is_user_admin(message.from_user.id, message.chat.id)
-        commands_text = get_all_commands_list(is_admin)
+        is_admin_user = check_admin(bot, message.from_user.id, message.chat.id)
+        commands_text = get_all_commands_list(is_admin_user)
         bot.send_message(message.chat.id, commands_text)
     
     @bot.message_handler(commands=['quick', 'быстрые'])
@@ -547,8 +548,9 @@ def register_user_handlers(bot):
         pct = (count / goal * 100) if goal > 0 else 0
         
         bot.reply_to(message, 
-            f"🏁 **ЗАВЕРШЕНИЕ СМЕНЫ**\n\n"
-            f"📊 Ваш результат: {count}/{goal} ({pct:.0f}%)\n"
-            f"⚠️ Это действие завершит смену и сформирует финальный отчет.\n\n"
-            f"Вы уверены?",
+            f"🏁 **ЗАВЕРШЕНИЕ СМЕНЫ** 🎭\n\n"
+            f"📊 Твой счёт: {count}/{goal} ({pct:.0f}%)\n"
+            f"{'🌟 План выполнен! Ты сегодня звезда!' if pct >= 100 else '⚠️ План не дотянул, но бывает...' if pct < 100 else ''}\n"
+            f"⚠️ Смена закроется + финальный отчёт.\n\n"
+            f"Готов закончить?",
             parse_mode="Markdown", reply_markup=markup)

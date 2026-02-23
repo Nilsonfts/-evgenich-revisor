@@ -155,18 +155,19 @@ if __name__ == "__main__":
         try:
             from telebot import types as tg_types
             bot.set_my_commands([
-                tg_types.BotCommand("start", "🚀 Начать смену"),
-                tg_types.BotCommand("check", "📋 Промежуточный отчет"),
-                tg_types.BotCommand("gameover", "🏁 Завершить смену"),
-                tg_types.BotCommand("help", "📖 Справка"),
-                tg_types.BotCommand("admin", "⚜️ Панель администратора"),
-                tg_types.BotCommand("status", "📊 Статус системы"),
-                tg_types.BotCommand("rating", "🏆 Рейтинг ведущих"),
-                tg_types.BotCommand("time", "🕐 Текущее время"),
-                tg_types.BotCommand("pause", "⏸️ Пауза (40 мин)"),
-                tg_types.BotCommand("stop_pause", "⏯️ Завершить паузу"),
+                tg_types.BotCommand("start", "🚀 На смену, воин!"),
+                tg_types.BotCommand("check", "📋 Как мои дела?"),
+                tg_types.BotCommand("gameover", "🏁 Хватит, я устал"),
+                tg_types.BotCommand("help", "📖 Что тут вообще можно?"),
+                tg_types.BotCommand("admin", "⚜️ Я тут главный"),
+                tg_types.BotCommand("status", "📊 Что происходит?"),
+                tg_types.BotCommand("rating", "🏆 Кто сегодня молодец?"),
+                tg_types.BotCommand("time", "🕐 Сколько натикало?"),
+                tg_types.BotCommand("pause", "⏸️ Тишина на 40 мин"),
+                tg_types.BotCommand("stop_pause", "⏯️ Хватит тишины"),
                 tg_types.BotCommand("settings", "⚙️ Настройки чата"),
-                tg_types.BotCommand("roles", "🎭 Информация о ролях"),
+                tg_types.BotCommand("roles", "🎭 Кто кем работает?"),
+                tg_types.BotCommand("commands", "📋 Все команды"),
             ])
             logging.info("✅ Команды бота зарегистрированы")
         except Exception as cmd_err:
