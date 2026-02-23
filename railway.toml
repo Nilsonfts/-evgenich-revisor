@@ -1,11 +1,10 @@
 [build]
-builder = "nixpacks"
+builder = "dockerfile"
 
 [deploy]
 healthcheckPath = "/health"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
-startCommand = "python main.py"
 
 # Настройка Volume для постоянного хранения данных
 [[deploy.volumes]]

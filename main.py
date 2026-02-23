@@ -85,7 +85,7 @@ def root_check():
 def run_health_server():
     """Запускает health check сервер в отдельном потоке."""
     try:
-        port = int(os.environ.get('PORT', 8000))  # Изменяем на 8000
+        port = int(os.environ.get('PORT', 8080))
         logging.info(f"🌐 Запуск health сервера на порту {port}")
         health_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
     except Exception as e:
@@ -135,6 +135,13 @@ if __name__ == "__main__":
     try:
         logging.info("🚀 Начинаем запуск бота ЕВГЕНИЧ...")
         
+        # ВАЖНО: Запускаем health check сервер ПЕРВЫМ для Railway
+        health_thread = threading.Thread(target=run_health_server, daemon=True)
+        health_thread.start()
+        import time
+        time.sleep(1)  # Даём Flask подняться
+        logging.info("✅ Health check сервер запущен")
+        
         # Загружаем данные
         load_all_data()
         logging.info("✅ Данные загружены")
@@ -176,15 +183,6 @@ if __name__ == "__main__":
         # Запускаем фоновые задачи
         start_background_tasks()
         logging.info("✅ Планировщик запущен")
-        
-        # Запускаем health check сервер (ВАЖНО: запускаем первым для Railway)
-        health_thread = threading.Thread(target=run_health_server, daemon=True)
-        health_thread.start()
-        logging.info("✅ Health check сервер запущен")
-        
-        # Даем время серверу запуститься
-        import time
-        time.sleep(2)
         
         logging.info("🎯 Бот запущен и готов к работе!")
         
