@@ -43,11 +43,12 @@ def register_user_handlers(bot):
         role_emoji = get_role_emoji(role)
         role_desc = get_role_description(role)
         
+        plan_done = "\n🌟 _План выполнен! Ты сегодня сигма!_ 🐺" if plan_percent >= 100 else ""
         report_lines = [
             f"📋 *Промежуточный отчёт* ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})",
             f"🎭 **Роль:** {role_emoji} {role_desc}",
             f"🗣️ **Голосовых:** {user_data.count} из {shift_goal} ({plan_percent:.0f}%)",
-            f"{'\n🌟 _План выполнен! Ты сегодня сигма!_ 🐺' if plan_percent >= 100 else ''}",
+            plan_done,
             f"☕ **Перерывов:** {user_data.breaks_count}",
             f"⏳ **Опозданий с перерыва:** {user_data.late_returns}"
         ]
