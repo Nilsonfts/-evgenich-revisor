@@ -77,6 +77,11 @@ def register_wizard_handlers(bot):
     def process_city_input(message: types.Message):
         """Обработка ввода города."""
         chat_id = str(message.chat.id)
+        
+        if message.text and message.text.strip() == '/cancel':
+            user_states.pop(chat_id, None)
+            return bot.send_message(message.chat.id, "❌ Настройка отменена.")
+        
         city = message.text.strip()
         
         if len(city) < 2:
@@ -98,6 +103,11 @@ def register_wizard_handlers(bot):
     def process_timezone_input(message: types.Message):
         """Обработка ввода часового пояса."""
         chat_id = str(message.chat.id)
+        
+        if message.text and message.text.strip() == '/cancel':
+            user_states.pop(chat_id, None)
+            return bot.send_message(message.chat.id, "❌ Настройка отменена.")
+        
         timezone_input = message.text.strip()
         
         # Проверяем формат (+3, -1, etc.)
@@ -127,6 +137,11 @@ def register_wizard_handlers(bot):
     def process_schedule_input(message: types.Message):
         """Обработка ввода графика смены."""
         chat_id = str(message.chat.id)
+        
+        if message.text and message.text.strip() == '/cancel':
+            user_states.pop(chat_id, None)
+            return bot.send_message(message.chat.id, "❌ Настройка отменена.")
+        
         schedule_input = message.text.strip()
         
         # Простая проверка формата времени
@@ -167,6 +182,11 @@ def register_wizard_handlers(bot):
     def process_plan_input(message: types.Message):
         """Обработка ввода плана ГС."""
         chat_id = str(message.chat.id)
+        
+        if message.text and message.text.strip() == '/cancel':
+            user_states.pop(chat_id, None)
+            return bot.send_message(message.chat.id, "❌ Настройка отменена.")
+        
         plan_input = message.text.strip()
         
         try:
@@ -199,6 +219,11 @@ def register_wizard_handlers(bot):
 
     def process_concept_input(message: types.Message):
         """Обработка ввода концепции и завершение настройки."""
+        if message.text and message.text.strip() == '/cancel':
+            chat_id = str(message.chat.id)
+            user_states.pop(chat_id, None)
+            return bot.send_message(message.chat.id, "❌ Настройка отменена.")
+        
         concept_input = message.text.strip().upper()
         chat_id = str(message.chat.id)
         

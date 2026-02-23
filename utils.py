@@ -14,7 +14,7 @@ from config import BOSS_ID, BREAK_DURATION_MINUTES, EXPECTED_VOICES_PER_SHIFT, s
 from state import chat_data, user_history
 # ИМПОРТИРУЕМ НАШИ НОВЫЕ МОДЕЛИ
 from models import UserData, ShiftData
-from database import db  # Импортируем базу данных
+from database_manager import db  # Используем единый database manager
 
 def load_json_data(filepath, default_value=None):  # noqa: B006
     """Загружает данные из JSON файла.
@@ -221,56 +221,66 @@ def enhanced_user_stats_report(user_id: int, username: str) -> str:
     
     return "\n".join(report_lines)
 
-# ИЗМЕНЕНО: Функция теперь работает с объектами ShiftData и UserData
+# ИЗМЕНЕНО: Функция теперь работает с объектами ShiftData и UserData, поддержка мульти-ролей
 def generate_detailed_report(chat_id: int, data: ShiftData) -> list:
-    """Собирает текстовый отчет на основе данных о смене."""
-    main_id = data.main_id
-    if not main_id: return ["Ошибка: в смене нет главного ведущего."]
-        
-    user_data = data.users.get(main_id)
-    if not user_data: return ["Ошибка: нет данных о ведущем."]
+    """Собирает текстовый отчет на основе данных о смене для ВСЕХ участников."""
+    if not data.users:
+        return ["Ошибка: нет данных о ведущих."]
 
     shift_start_dt = datetime.datetime.fromisoformat(data.shift_start_time)
     report_date = shift_start_dt.strftime('%d.%m.%Y')
 
-    shift_goal = data.shift_goal
-    plan_percent = (user_data.count / shift_goal * 100) if shift_goal > 0 else 0
-    avg_delta = sum(user_data.voice_deltas) / len(user_data.voice_deltas) if user_data.voice_deltas else 0
-    max_pause = max(user_data.voice_deltas or [0])
-    avg_duration = sum(user_data.voice_durations) / len(user_data.voice_durations) if user_data.voice_durations else 0
-
     report_lines = [
         f"📋 **#ОтчетВедущего** ({report_date})",
-        f"🎤 **Ведущий:** {user_data.username}",
-        "\n---",
-        "**📊 Основная Статистика**",
-        f"**Голосовых:** {user_data.count} из {shift_goal} ({plan_percent:.0f}%)",
-        f"**Перерывов:** {user_data.breaks_count}",
-        f"**Опозданий:** {user_data.late_returns}",
-        "\n---",
-        "**📈 Аналитика Активности**",
-        f"**Средний ритм:** {avg_delta:.1f} мин/ГС" if avg_delta else "**Средний ритм:** Н/Д",
-        f"**Макс. пауза:** {max_pause:.1f} мин." if max_pause else "**Макс. пауза:** Н/Д",
-        f"**Ср. длина ГС:** {avg_duration:.1f} сек." if avg_duration else "**Ср. длина ГС:** Н/Д"
     ]
-    
-    ad_counts = Counter(user_data.recognized_ads)
-    if ad_counts:
-        report_lines.append("\n---\n**📝 Анализ Контента**")
-        for ad, count in ad_counts.items():
-            report_lines.append(f"✔️ {ad} (x{count})")
-    
-    # Добавляем маркетинговые инсайты
-    marketing_insights = generate_marketing_insights(user_data, shift_goal)
-    if marketing_insights:
-        report_lines.append(f"\n---\n**💡 Маркетинговые Инсайты**")
-        report_lines.append(marketing_insights)
-    
-    # Добавляем бизнес-рекомендации
-    business_recommendations = generate_business_recommendations(user_data, shift_goal, chat_id)
-    if business_recommendations:
-        report_lines.append(f"\n---\n**🎯 Рекомендации для Бизнеса**")
-        report_lines.append(business_recommendations)
+
+    for user_id, user_data in data.users.items():
+        if user_data.count == 0 and not user_data.on_break:
+            continue  # Пропускаем пользователей без активности
+        
+        role = getattr(user_data, 'role', 'караоке_ведущий')
+        from roles import get_role_emoji, get_role_description
+        role_emoji = get_role_emoji(role)
+        role_desc = get_role_description(role)
+        
+        shift_goal = getattr(user_data, 'goal', data.shift_goal)
+        plan_percent = (user_data.count / shift_goal * 100) if shift_goal > 0 else 0
+        avg_delta = sum(user_data.voice_deltas) / len(user_data.voice_deltas) if user_data.voice_deltas else 0
+        max_pause = max(user_data.voice_deltas or [0])
+        avg_duration = sum(user_data.voice_durations) / len(user_data.voice_durations) if user_data.voice_durations else 0
+
+        report_lines.extend([
+            f"\n---",
+            f"{role_emoji} **Ведущий:** {user_data.username} ({role_desc})",
+            f"**📊 Основная Статистика**",
+            f"**Голосовых:** {user_data.count} из {shift_goal} ({plan_percent:.0f}%)",
+            f"**Перерывов:** {user_data.breaks_count}",
+            f"**Опозданий:** {user_data.late_returns}",
+            f"**📈 Аналитика Активности**",
+            f"**Средний ритм:** {avg_delta:.1f} мин/ГС" if avg_delta else "**Средний ритм:** Н/Д",
+            f"**Макс. пауза:** {max_pause:.1f} мин." if max_pause else "**Макс. пауза:** Н/Д",
+            f"**Ср. длина ГС:** {avg_duration:.1f} сек." if avg_duration else "**Ср. длина ГС:** Н/Д",
+        ])
+        
+        ad_counts = Counter(user_data.recognized_ads)
+        if ad_counts:
+            report_lines.append("\n**📝 Анализ Контента**")
+            for ad, count in ad_counts.items():
+                report_lines.append(f"✔️ {ad} (x{count})")
+
+    # Добавляем общие маркетинговые инсайты на основе первого ведущего (main)
+    main_user_data = data.users.get(data.main_id)
+    if main_user_data:
+        shift_goal = getattr(main_user_data, 'goal', data.shift_goal)
+        marketing_insights = generate_marketing_insights(main_user_data, shift_goal)
+        if marketing_insights:
+            report_lines.append(f"\n---\n**💡 Маркетинговые Инсайты**")
+            report_lines.append(marketing_insights)
+        
+        business_recommendations = generate_business_recommendations(main_user_data, shift_goal, chat_id)
+        if business_recommendations:
+            report_lines.append(f"\n---\n**🎯 Рекомендации для Бизнеса**")
+            report_lines.append(business_recommendations)
             
     return report_lines
 

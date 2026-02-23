@@ -15,7 +15,7 @@ from utils import get_chat_title, generate_detailed_report, init_shift_data
 from g_sheets import append_shift_to_google_sheet
 from state_manager import save_state
 from models import UserData
-from database import db  # Импортируем базу данных
+from database_manager import db  # Используем единый database manager
 
 def format_username(username: str) -> str:
     """Форматирует username для отправки в сообщении с правильным @ символом."""

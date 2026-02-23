@@ -89,5 +89,5 @@ def get_available_roles_for_day(day_of_week: int):
 def get_default_role_goals(day_of_week: int):
     """Возвращает цели для ролей по умолчанию."""
     if day_of_week in [4, 5]:
-        return {UserRole.KARAOKE_HOST.value: 18, UserRole.MC.value: 17}
-    return {UserRole.KARAOKE_HOST.value: 18}
+        return {UserRole.KARAOKE_HOST.value: 15, UserRole.MC.value: 10}
+    return {UserRole.KARAOKE_HOST.value: 15}

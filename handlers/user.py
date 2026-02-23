@@ -24,40 +24,48 @@ def register_user_handlers(bot):
         if not shift or not shift.main_id:
             phrase = random.choice(soviet_phrases.get("system_messages", {}).get('shift_not_started', ["Смена в этом чате еще не началась."]))
             return bot.reply_to(message, phrase)
+        
+        # ИСПРАВЛЕНО: Проверяем, что пользователь участник смены (не только main_id)
+        if user_id not in shift.users:
+            return bot.reply_to(message, "Вы не участвуете в текущей смене. Используйте /start для начала.")
             
-        if user_id != shift.main_id:
-            main_username = shift.main_username
-            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('only_for_main_user', ["Эту команду может использовать только текущий главный на смене: {main_username}."]))
-            return bot.reply_to(message, phrase.format(main_username=main_username))
-            
-        main_user_data = shift.users.get(shift.main_id)
-        if not main_user_data:
+        user_data = shift.users.get(user_id)
+        if not user_data:
             return bot.reply_to(message, "Не удалось найти ваши данные по текущей смене.")
 
-        shift_goal = shift.shift_goal
-        plan_percent = (main_user_data.count / shift_goal * 100) if shift_goal > 0 else 0
+        # Используем персональную цель пользователя (или общую цель смены)
+        shift_goal = getattr(user_data, 'goal', shift.shift_goal)
+        plan_percent = (user_data.count / shift_goal * 100) if shift_goal > 0 else 0
+        
+        # Показываем роль
+        role = getattr(user_data, 'role', 'караоке_ведущий')
+        from roles import get_role_emoji, get_role_description
+        role_emoji = get_role_emoji(role)
+        role_desc = get_role_description(role)
+        
         report_lines = [
-            f"📋 *Промежуточный отчет для вас* ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})",
-            f"🗣️ **Голосовых:** {main_user_data.count} из {shift_goal} ({plan_percent:.0f}%)",
-            f"☕ **Перерывов:** {main_user_data.breaks_count}",
-            f"⏳ **Опозданий с перерыва:** {main_user_data.late_returns}"
+            f"📋 *Промежуточный отчет* ({datetime.datetime.now(pytz.timezone('Europe/Moscow')).strftime('%H:%M')})",
+            f"🎭 **Роль:** {role_emoji} {role_desc}",
+            f"🗣️ **Голосовых:** {user_data.count} из {shift_goal} ({plan_percent:.0f}%)",
+            f"☕ **Перерывов:** {user_data.breaks_count}",
+            f"⏳ **Опозданий с перерыва:** {user_data.late_returns}"
         ]
         
         # Добавляем информацию о паузе, если активна
-        if main_user_data.on_pause:
+        if user_data.on_pause:
             now_moscow = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
-            pause_start = datetime.datetime.fromisoformat(main_user_data.pause_start_time)
+            pause_start = datetime.datetime.fromisoformat(user_data.pause_start_time)
             elapsed = (now_moscow - pause_start).total_seconds() / 60
             remaining = max(0, 40 - elapsed)
             if remaining > 0:
                 report_lines.append(f"⏸️ **ПАУЗА АКТИВНА:** осталось {int(remaining)} мин")
             else:
                 # Пауза истекла, автоматически отключаем
-                main_user_data.on_pause = False
-                main_user_data.pause_end_time = now_moscow.isoformat()
+                user_data.on_pause = False
+                user_data.pause_end_time = now_moscow.isoformat()
                 report_lines.append("⏯️ **Пауза завершена** автоматически!")
         
-        ad_counts = Counter(main_user_data.recognized_ads)
+        ad_counts = Counter(user_data.recognized_ads)
         if ad_counts:
             report_lines.append("\n**📝 Анализ контента:**")
             for ad, count in ad_counts.items():
@@ -117,7 +125,7 @@ def register_user_handlers(bot):
     def handle_admin_help(message: types.Message):
         """Обработчик команды помощи для админов."""
         from utils import is_admin
-        if not is_admin(bot, message.chat.id, message.from_user.id):
+        if not is_admin(bot, message.from_user.id, message.chat.id):
             return bot.reply_to(message, "❌ Эта команда доступна только администраторам.")
         
         from help_system import get_admin_help_text
@@ -149,25 +157,55 @@ def register_user_handlers(bot):
         quick_text = get_quick_commands()
         bot.send_message(message.chat.id, quick_text)
 
-    @bot.message_handler(commands=['time'])
+    @bot.message_handler(commands=['time', 'время'])
     def handle_time(message: types.Message):
-        """Показывает текущее время."""
-        import datetime
+        """Показывает текущее время. Для админов с аргументом — устанавливает тайм-аут."""
         import pytz
+        from state import chat_configs
+        from config import VOICE_TIMEOUT_MINUTES, CHAT_CONFIG_FILE
+        from utils import save_json_data
         
+        args = message.text.split()
+        
+        # Если есть аргумент — это команда установки тайм-аута (только для админов)
+        if len(args) > 1:
+            if not is_admin(bot, message.from_user.id, message.chat.id):
+                return bot.reply_to(message, "❌ Установка тайм-аута доступна только администраторам.")
+            
+            chat_id = message.chat.id
+            try:
+                new_timeout = int(args[1])
+                if new_timeout <= 0:
+                    raise ValueError("Значение должно быть положительным.")
+                
+                if str(chat_id) not in chat_configs:
+                    chat_configs[str(chat_id)] = {}
+                
+                chat_configs[str(chat_id)]['voice_timeout'] = new_timeout
+                
+                if save_json_data(CHAT_CONFIG_FILE, chat_configs):
+                    bot.reply_to(message, f"✅ **Успешно!**\nНапоминания об отсутствии голосовых будут через *{new_timeout} минут* бездействия.")
+                    logging.info(f"Администратор {message.from_user.id} изменил тайм-аут для чата {chat_id} на {new_timeout} мин.")
+                else:
+                    bot.reply_to(message, "❌ Не удалось сохранить настройку.")
+            except (ValueError, IndexError):
+                default_timeout = chat_configs.get(str(chat_id), {}).get('voice_timeout', VOICE_TIMEOUT_MINUTES)
+                bot.reply_to(message, f"**Неверный формат.**\n\nИспользуйте: `/time [минуты]`\n*Пример:* `/time 25`\n\nТекущее значение: *{default_timeout} минут*.")
+            return
+        
+        # Без аргументов — показываем время
         moscow_tz = pytz.timezone('Europe/Moscow')
         now = datetime.datetime.now(moscow_tz)
         
         time_text = f"🕐 Текущее время: {now.strftime('%H:%M:%S')}\n📅 Дата: {now.strftime('%d.%m.%Y')}\n🌍 Часовой пояс: Москва (MSK)"
         bot.send_message(message.chat.id, time_text)
 
-    @bot.message_handler(commands=['rating'])
+    @bot.message_handler(commands=['rating', 'рейтинг'])
     def handle_rating(message: types.Message):
         """Показывает рейтинг всех ведущих."""
-        from database import BotDatabase
+        from database_manager import db
         
         try:
-            db = BotDatabase()  # Используем дефолтный путь из конфигурации
             rating_data = db.get_user_rating()
             
             if not rating_data:
@@ -246,12 +284,11 @@ def register_user_handlers(bot):
             phrase = random.choice(soviet_phrases.get("system_messages", {}).get('shift_not_started', ["Смена в этом чате еще не началась."]))
             return bot.reply_to(message, phrase)
             
-        if user_id != shift.main_id:
-            main_username = shift.main_username
-            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('only_for_main_user', ["Эту команду может использовать только текущий главный на смене: {main_username}."]))
-            return bot.reply_to(message, phrase.format(main_username=main_username))
+        # ИСПРАВЛЕНО: Проверяем, что пользователь участник смены (не только main)
+        if user_id not in shift.users:
+            return bot.reply_to(message, "Вы не участвуете в текущей смене. Используйте /start для начала.")
             
-        user_data = shift.users.get(shift.main_id)
+        user_data = shift.users.get(user_id)
         if not user_data:
             return bot.reply_to(message, "Не удалось найти ваши данные по текущей смене.")
 
@@ -280,11 +317,16 @@ def register_user_handlers(bot):
         if user_data.on_break:
             user_data.on_break = False
             
+        # Inline-кнопка для быстрого завершения паузы
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⏯️ Завершить паузу досрочно", callback_data=f"stop_pause_{user_id}"))
+        
         bot.reply_to(message, 
             f"⏸️ **ПАУЗА АКТИВИРОВАНА** на 40 минут!\n\n"
             f"🚫 Все счетчики остановлены\n"
             f"⏰ Пауза до: {(now_moscow + datetime.timedelta(minutes=40)).strftime('%H:%M')}\n"
-            f"ℹ️ Для досрочного завершения: `/стоп_пауза`")
+            f"ℹ️ Для досрочного завершения: `/стоп_пауза`",
+            reply_markup=markup)
 
     @bot.message_handler(commands=['стоп_пауза', 'stop_pause'])
     def handle_stop_pause(message: types.Message):
@@ -297,12 +339,11 @@ def register_user_handlers(bot):
             phrase = random.choice(soviet_phrases.get("system_messages", {}).get('shift_not_started', ["Смена в этом чате еще не началась."]))
             return bot.reply_to(message, phrase)
             
-        if user_id != shift.main_id:
-            main_username = shift.main_username
-            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('only_for_main_user', ["Эту команду может использовать только текущий главный на смене: {main_username}."]))
-            return bot.reply_to(message, phrase.format(main_username=main_username))
+        # ИСПРАВЛЕНО: Проверяем, что пользователь участник смены
+        if user_id not in shift.users:
+            return bot.reply_to(message, "Вы не участвуете в текущей смене. Используйте /start для начала.")
             
-        user_data = shift.users.get(shift.main_id)
+        user_data = shift.users.get(user_id)
         if not user_data:
             return bot.reply_to(message, "Не удалось найти ваши данные по текущей смене.")
 
@@ -438,17 +479,28 @@ def register_user_handlers(bot):
             phrase = random.choice(soviet_phrases.get("system_messages", {}).get('shift_not_started', ["Смена в этом чате еще не началась."]))
             return bot.reply_to(message, phrase)
         
-        # Проверяем, что команду использует текущий ведущий
-        if user_id != shift.main_id:
-            main_username = shift.main_username
-            phrase = random.choice(soviet_phrases.get("system_messages", {}).get('only_for_main_user', ["Эту команду может использовать только текущий главный на смене: {main_username}."]))
-            return bot.reply_to(message, phrase.format(main_username=main_username))
+        # Проверяем, что команду использует текущий ведущий (любой участник смены)
+        if user_id not in shift.users:
+            return bot.reply_to(message, "Вы не участвуете в текущей смене.")
         
         # Проверяем, что рабочее время смены уже закончилось
         from state import chat_configs
         config = chat_configs.get(str(chat_id), {})
-        tz_name = config.get('timezone', 'Europe/Moscow')
-        end_time_str = config.get('end_time', '04:00')
+        
+        # ИСПРАВЛЕНО: timezone хранится как число (offset от Москвы), конвертируем в строку
+        timezone_offset = config.get('timezone', 0)
+        from config import TIMEZONE_MAP
+        # TIMEZONE_MAP использует строковые ключи: "0", "+2", "-1" и т.д.
+        tz_key = f"+{timezone_offset}" if timezone_offset > 0 else str(timezone_offset)
+        tz_obj = TIMEZONE_MAP.get(tz_key)
+        if tz_obj:
+            tz_name = str(tz_obj)
+        else:
+            tz_name = 'Europe/Moscow'
+        
+        # ИСПРАВЛЕНО: end_time хранится в schedule.end, не в end_time
+        schedule = config.get('schedule', {})
+        end_time_str = schedule.get('end', config.get('end_time', '04:00'))
         
         try:
             import pytz
@@ -480,21 +532,23 @@ def register_user_handlers(bot):
             
         except Exception as e:
             logging.error(f"Ошибка при проверке времени смены для /gameover в чате {chat_id}: {e}")
-            return bot.reply_to(message, "❌ Произошла ошибка при проверке времени смены. Попробуйте позже.")
+            # Не блокируем — позволяем завершить если ошибка в конфиге
         
-        # Если все проверки пройдены, завершаем смену
-        from scheduler import send_end_of_shift_report_for_chat
+        # Если все проверки пройдены — показываем подтверждение
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("✅ Да, завершить смену", callback_data="confirm_gameover"),
+            types.InlineKeyboardButton("❌ Отмена", callback_data="confirm_gameover_cancel")
+        )
+        
+        user_data = shift.users.get(user_id)
+        goal = getattr(user_data, 'goal', shift.shift_goal)
+        count = user_data.count if user_data else 0
+        pct = (count / goal * 100) if goal > 0 else 0
         
         bot.reply_to(message, 
-            f"🏁 **СМЕНА ЗАВЕРШАЕТСЯ ДОСРОЧНО**\n\n" 
-            f"✅ Команда /gameover принята!\n"
-            f"📊 Формирую финальный отчет...\n"
-            f"⏱️ Это может занять несколько секунд.")
-        
-        try:
-            # Вызываем функцию завершения смены
-            send_end_of_shift_report_for_chat(bot, chat_id)
-            logging.info(f"Смена в чате {chat_id} завершена командой /gameover пользователем {user_id}")
-        except Exception as e:
-            logging.error(f"Ошибка при выполнении /gameover в чате {chat_id}: {e}")
-            bot.send_message(chat_id, "❌ Произошла ошибка при завершении смены. Обратитесь к администратору.")
+            f"🏁 **ЗАВЕРШЕНИЕ СМЕНЫ**\n\n"
+            f"📊 Ваш результат: {count}/{goal} ({pct:.0f}%)\n"
+            f"⚠️ Это действие завершит смену и сформирует финальный отчет.\n\n"
+            f"Вы уверены?",
+            parse_mode="Markdown", reply_markup=markup)

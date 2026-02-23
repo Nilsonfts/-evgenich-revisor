@@ -98,7 +98,7 @@ def load_all_data():
     global chat_data, user_history
     
     raw_configs = load_json_data(CHAT_CONFIG_FILE, {})
-    chat_configs.update({int(k): v for k, v in raw_configs.items()})
+    chat_configs.update({str(k): v for k, v in raw_configs.items()})  # Всегда строковые ключи
     
     ad_templates.update(load_json_data(AD_TEMPLATES_FILE, {}))
     logging.info(f"Загружено {len(chat_configs)} конфигураций чатов.")
@@ -148,8 +148,29 @@ if __name__ == "__main__":
         
         # Регистрируем обработчики
         handlers.register_handlers(bot)  # Регистрируем модульные обработчики (включая wizards)
-        register_admin_panel_handlers(bot)  # Регистрируем админ-панель
+        register_admin_panel_handlers(bot)  # Регистрируем админ-панель (кнопочное меню)
         logging.info("✅ Обработчики зарегистрированы")
+        
+        # Регистрируем команды бота для подсказок в Telegram
+        try:
+            from telebot import types as tg_types
+            bot.set_my_commands([
+                tg_types.BotCommand("start", "🚀 Начать смену"),
+                tg_types.BotCommand("check", "📋 Промежуточный отчет"),
+                tg_types.BotCommand("gameover", "🏁 Завершить смену"),
+                tg_types.BotCommand("help", "📖 Справка"),
+                tg_types.BotCommand("admin", "⚜️ Панель администратора"),
+                tg_types.BotCommand("status", "📊 Статус системы"),
+                tg_types.BotCommand("rating", "🏆 Рейтинг ведущих"),
+                tg_types.BotCommand("time", "🕐 Текущее время"),
+                tg_types.BotCommand("pause", "⏸️ Пауза (40 мин)"),
+                tg_types.BotCommand("stop_pause", "⏯️ Завершить паузу"),
+                tg_types.BotCommand("settings", "⚙️ Настройки чата"),
+                tg_types.BotCommand("roles", "🎭 Информация о ролях"),
+            ])
+            logging.info("✅ Команды бота зарегистрированы")
+        except Exception as cmd_err:
+            logging.warning(f"⚠️ Не удалось установить команды бота: {cmd_err}")
         
         # Запускаем фоновые задачи
         start_background_tasks()
@@ -165,6 +186,23 @@ if __name__ == "__main__":
         time.sleep(2)
         
         logging.info("🎯 Бот запущен и готов к работе!")
+        
+        # Graceful shutdown — сохраняем состояние при остановке
+        import signal
+        from state_manager import save_state
+        
+        def graceful_shutdown(signum, frame):
+            logging.info("🛑 Получен сигнал завершения. Сохраняю состояние...")
+            try:
+                save_state(bot, chat_data, user_history)
+                logging.info("✅ Состояние сохранено")
+            except Exception as e:
+                logging.error(f"❌ Ошибка сохранения: {e}")
+            logging.info("👋 Бот остановлен")
+            exit(0)
+        
+        signal.signal(signal.SIGTERM, graceful_shutdown)
+        signal.signal(signal.SIGINT, graceful_shutdown)
         
         # Запускаем polling бота
         bot.polling(none_stop=True)

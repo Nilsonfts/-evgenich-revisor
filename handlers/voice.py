@@ -141,6 +141,8 @@ def register_voice_handlers(bot):
         username = get_username(from_user)
         now_moscow = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
 
+        user_data_copy_for_thread = None
+        
         # Используем 'with data_lock' для всех операций с общими данными
         with data_lock:
             if chat_id not in chat_data or not chat_data[chat_id]: 
@@ -159,7 +161,8 @@ def register_voice_handlers(bot):
             # Автоматическое назначение ролей в выходные дни
             auto_assign_weekend_roles(shift, user_id, username, chat_id, bot)
 
-            if shift.main_id == user_id:
+            # ИСПРАВЛЕНО: Принимаем голосовые от ВСЕХ участников смены, не только от main_id
+            if user_id in shift.users:
                 if is_new_main:
                     phrase = random.choice(soviet_phrases.get("system_messages", {}).get('first_voice_new_main', ["👑 {username} становится главным, записав первое ГС!"]))
                     bot.send_message(chat_id, phrase.format(username=username))
@@ -167,6 +170,7 @@ def register_voice_handlers(bot):
 
                 user_data = shift.users[user_id]
                 
+                # Проверяем кулдаун голосовых
                 if not is_new_main and user_data.last_voice_time:
                     last_voice_time = datetime.datetime.fromisoformat(user_data.last_voice_time)
                     time_since_last = (now_moscow - last_voice_time).total_seconds()
@@ -179,6 +183,26 @@ def register_voice_handlers(bot):
                 if message.voice.duration < VOICE_MIN_DURATION_SECONDS:
                     bot.reply_to(message, f"*{random.choice(soviet_phrases.get('too_short', ['Коротко']))}* ({message.voice.duration} сек)")
                     return
+
+                # Проверяем, на паузе ли пользователь
+                if user_data.on_pause:
+                    pause_start = datetime.datetime.fromisoformat(user_data.pause_start_time)
+                    elapsed = (now_moscow - pause_start).total_seconds() / 60
+                    remaining = max(0, 40 - elapsed)
+                    if remaining > 0:
+                        user_data.on_pause = False
+                        user_data.pause_end_time = now_moscow.isoformat()
+                        bot.send_message(chat_id, 
+                            f"⏯️ **ПАУЗА ЗАВЕРШЕНА** голосовым сообщением!\n"
+                            f"✅ Все счетчики возобновлены. Голосовое засчитано!")
+                    else:
+                        user_data.on_pause = False
+                        user_data.pause_end_time = now_moscow.isoformat()
+
+                # Если на перерыве — возвращение
+                if user_data.on_break:
+                    from utils import handle_user_return
+                    handle_user_return(bot, chat_id, user_id)
 
                 bot.send_message(chat_id, f"*{random.choice(soviet_phrases.get('accept', ['Принято']))}*", reply_to_message_id=message.message_id)
 
@@ -200,7 +224,7 @@ def register_voice_handlers(bot):
                 save_voice_statistics(chat_id, user_id, username, voice_duration)
 
         # Запускаем анализ голоса вне блокировки
-        if client and 'user_data_copy_for_thread' in locals():
+        if client and user_data_copy_for_thread is not None:
             try:
                 file_info = bot.get_file(message.voice.file_id)
                 downloaded_file = bot.download_file(file_info.file_path)

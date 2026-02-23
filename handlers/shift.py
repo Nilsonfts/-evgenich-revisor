@@ -16,7 +16,7 @@ from roles import (
     get_current_day_type, get_roles_for_day_type, get_goals_for_day_type,
     UserRole, ROLE_EMOJIS, ROLE_DESCRIPTIONS, is_weekend_shift, get_default_role_goals
 )
-from database import db
+from database_manager import db
 
 def register_shift_handlers(bot):
     from utils import admin_required
@@ -25,9 +25,17 @@ def register_shift_handlers(bot):
     @admin_required(bot)
     def handle_restart(message: types.Message):
         chat_id = message.chat.id
-        init_shift_data(chat_id)
-        bot.send_message(chat_id, "🔄 Смена успешно сброшена администратором!")
-        logging.info(f"Смена сброшена в чате {chat_id} админом {message.from_user.id}")
+        # Подтверждение через кнопки
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("✅ Да, сбросить", callback_data="confirm_restart"),
+            types.InlineKeyboardButton("❌ Отмена", callback_data="confirm_restart_cancel")
+        )
+        bot.send_message(chat_id, 
+            "🔄 **Сброс смены**\n\n"
+            "⚠️ Это действие необратимо! Все данные текущей смены будут потеряны.\n"
+            "Вы уверены?",
+            parse_mode="Markdown", reply_markup=markup)
 
     @bot.message_handler(commands=['startmc', 'стартmc'])
     def handle_startmc(message: types.Message):
@@ -46,6 +54,25 @@ def register_shift_handlers(bot):
         chat_id = message.chat.id
         from_user = message.from_user
         username = get_username(from_user)
+        
+        # В личных сообщениях — показываем приветствие
+        if message.chat.type == 'private':
+            welcome_text = [
+                "👋 **Привет! Я ЕВГЕНИЧ — бот-ревизор для караоке-баров!**\n",
+                "🎤 Я помогаю отслеживать работу ведущих на сменах:\n",
+                "• 📊 Считаю голосовые сообщения",
+                "• ⏱️ Контролирую перерывы",
+                "• 📝 Формирую отчеты",
+                "• 🎭 Поддерживаю систему ролей\n",
+                "**Как начать:**",
+                "1️⃣ Добавьте меня в рабочий чат",
+                "2️⃣ Сделайте меня администратором",
+                "3️⃣ Запустите `/setup_wizard` для настройки",
+                "4️⃣ Начните смену командой `/start`\n",
+                "📖 Используйте /help для полной справки.",
+            ]
+            return bot.send_message(chat_id, "\n".join(welcome_text), parse_mode="Markdown")
+        
         args = message.text.split()[1:] if len(message.text.split()) > 1 else []
         requested_role = None
         # Распознаем аргументы роли
@@ -213,7 +240,8 @@ def register_shift_handlers(bot):
         chat_id = message.chat.id
         user_id = message.from_user.id
         shift = chat_data.get(chat_id)
-        if not shift or shift.main_id != user_id: return
+        # ИСПРАВЛЕНО: Перерыв доступен любому участнику смены
+        if not shift or user_id not in shift.users: return
         
         user_data = shift.users.get(user_id)
         if not user_data: return
@@ -245,7 +273,8 @@ def register_shift_handlers(bot):
         chat_id = message.chat.id
         user_id = message.from_user.id
         shift = chat_data.get(chat_id)
-        if not shift or shift.main_id != user_id: return
+        # ИСПРАВЛЕНО: Возвращение доступно любому участнику смены
+        if not shift or user_id not in shift.users: return
         
         handle_user_return(bot, chat_id, user_id)
 
@@ -283,15 +312,18 @@ def register_shift_handlers(bot):
         from_username = get_username(from_user)
         to_username = get_username(to_user)
 
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("✅ Принять смену", callback_data=f"transfer_accept_{to_user.id}"))
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("✅ Принять смену", callback_data=f"transfer_accept_{to_user.id}"),
+            types.InlineKeyboardButton("❌ Отклонить", callback_data=f"transfer_decline_{to_user.id}")
+        )
         
         phrase_template = random.choice(soviet_phrases.get("system_messages", {}).get('shift_transfer_offer', ["{from_username} предлагает передать смену {to_username}."]))
         text = phrase_template.format(from_username=from_username, to_username=to_username)
         
         sent_message = bot.send_message(chat_id, text, reply_markup=markup)
         
-        timer = threading.Timer(300, cancel_transfer, args=[bot, chat_id])
+        timer = threading.Timer(300, cancel_transfer, args=[chat_id])
         timer.start()
         
         pending_transfers[chat_id] = {

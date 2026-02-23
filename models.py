@@ -29,6 +29,7 @@ class UserData:
     recognized_ads: List[str] = field(default_factory=list)
     voice_deltas: List[float] = field(default_factory=list)
     voice_durations: List[int] = field(default_factory=list)
+    goal: int = 15  # Цель по голосовым сообщениям
 
 @dataclass
 class ShiftData:

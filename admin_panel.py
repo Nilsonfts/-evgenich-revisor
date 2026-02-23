@@ -9,7 +9,7 @@ from typing import Optional
 
 from utils import is_admin, get_username
 from config import BOSS_ID
-from database import db
+from database_manager import db  # Единый database manager
 from roles import (
     get_current_day_type, get_roles_for_day_type, get_goals_for_day_type,
     DayType, UserRole, ROLE_EMOJIS, ROLE_DESCRIPTIONS, DAY_TYPE_MAPPING
@@ -77,7 +77,7 @@ class AdminPanel:
             )
         )
         
-        markup.add(types.InlineKeyboardButton("", callback_data="separator"))
+        markup.add(types.InlineKeyboardButton("─────────────", callback_data="separator"))
         
         # Показываем активные роли
         for role in current_roles:
@@ -90,7 +90,7 @@ class AdminPanel:
                 )
             )
         
-        markup.add(types.InlineKeyboardButton("", callback_data="separator"))
+        markup.add(types.InlineKeyboardButton("─────────────", callback_data="separator"))
         
         # Управление
         markup.add(
@@ -267,34 +267,154 @@ def register_admin_panel_handlers(bot):
                 bot.answer_callback_query(call.id)  # Игнорируем нажатия на разделители
                 
             elif call.data == "admin_status":
-                # Выполняем команду /status
-                from handlers.admin import command_status
-                try:
-                    command_status(call.message)
+                # Показываем статус смены
+                from state import chat_data
+                from utils import generate_detailed_report
+                shift = chat_data.get(chat_id)
+                if not shift or not shift.main_id:
+                    bot.answer_callback_query(call.id, "Смена не активна")
+                    bot.send_message(chat_id, "⚪ Смена в этом чате еще не началась.")
+                else:
+                    report_lines = generate_detailed_report(chat_id, shift)
+                    report_text = "\n".join(report_lines)
+                    bot.send_message(chat_id, report_text, parse_mode="Markdown")
                     bot.answer_callback_query(call.id, "📊 Статус смены")
-                except Exception as e:
-                    bot.answer_callback_query(call.id, f"❌ Ошибка: {str(e)}")
                     
             elif call.data == "admin_report":
-                # Выполняем команду /report
-                from handlers.admin import command_report
-                try:
-                    command_report(call.message)
-                    bot.answer_callback_query(call.id, "📝 Отчет формируется...")
-                except Exception as e:
-                    bot.answer_callback_query(call.id, f"❌ Ошибка: {str(e)}")
+                # Досрочный отчет с подтверждением
+                from telebot import types as t
+                markup = t.InlineKeyboardMarkup(row_width=2)
+                markup.add(
+                    t.InlineKeyboardButton("✅ Да, завершить", callback_data="confirm_report"),
+                    t.InlineKeyboardButton("❌ Отмена", callback_data="confirm_report_cancel")
+                )
+                bot.send_message(chat_id,
+                    "📝 **Досрочный отчёт**\n\n"
+                    "⚠️ Это завершит текущую смену.\nВы уверены?",
+                    parse_mode="Markdown", reply_markup=markup)
+                bot.answer_callback_query(call.id, "📝 Подтвердите действие")
                     
             elif call.data == "admin_problems":
-                # Выполняем команду /problems
-                from handlers.admin import command_problems
+                # Анализ проблемных зон
+                bot.answer_callback_query(call.id, "🚨 Анализирую...")
                 try:
-                    command_problems(call.message)
-                    bot.answer_callback_query(call.id, "🚨 Анализ проблем...")
+                    import pandas as pd
+                    from g_sheets import get_sheet
+                    from config import VOICE_TIMEOUT_MINUTES
+                    from state import chat_configs
+                    worksheet = get_sheet()
+                    if not worksheet:
+                        bot.send_message(chat_id, "Не удалось подключиться к Google Таблице.")
+                    else:
+                        df = pd.DataFrame(worksheet.get_all_records())
+                        if df.empty:
+                            bot.send_message(chat_id, "В таблице нет данных.")
+                        else:
+                            chat_timeout = chat_configs.get(str(chat_id), {}).get('voice_timeout', VOICE_TIMEOUT_MINUTES)
+                            numeric_cols = ['Выполнение (%)', 'Опозданий (шт)', 'Макс. пауза (мин)']
+                            for col in numeric_cols:
+                                df[col] = df[col].astype(str).str.replace('%', '', regex=False)
+                                df[col] = pd.to_numeric(df[col], errors='coerce')
+                            df.dropna(subset=numeric_cols, inplace=True)
+                            low_perf = df[df['Выполнение (%)'] < 80]
+                            report_lines = ["🚨 **Анализ проблемных зон**\n"]
+                            if not low_perf.empty:
+                                report_lines.append("*📉 Низкое выполнение плана (<80%):*")
+                                for _, row in low_perf.head(5).iterrows():
+                                    report_lines.append(f" - {row.get('Дата', 'N/A')} {row.get('Тег Ведущего', 'N/A')}: *{row['Выполнение (%)']:.0f}%*")
+                            if len(report_lines) == 1:
+                                bot.send_message(chat_id, "✅ Проблемных зон не найдено!")
+                            else:
+                                bot.send_message(chat_id, "\n".join(report_lines), parse_mode="Markdown")
                 except Exception as e:
-                    bot.answer_callback_query(call.id, f"❌ Ошибка: {str(e)}")
-                
+                    logging.error(f"Ошибка анализа проблем в админ-панели: {e}")
+                    bot.send_message(chat_id, f"❌ Ошибка: {e}")
+            
+            elif call.data == "admin_rating":
+                bot.answer_callback_query(call.id, "📈 Загружаю рейтинг...")
+                try:
+                    from database_manager import db as db_inst
+                    rating_data = db_inst.get_user_rating()
+                    if not rating_data:
+                        bot.send_message(chat_id, "📊 Данных для рейтинга пока нет.")
+                    else:
+                        rating_text = ["🏆 **РЕЙТИНГ ВЕДУЩИХ** 🏆\n"]
+                        for i, (username, total_voices, avg_voices) in enumerate(rating_data[:10], 1):
+                            emoji = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+                            safe_username = username.replace('_', r'\_').replace('*', r'\*')
+                            rating_text.append(f"{emoji} {safe_username}: {total_voices} ГС (ср. {avg_voices})")
+                        bot.send_message(chat_id, "\n".join(rating_text), parse_mode="Markdown")
+                except Exception as e:
+                    bot.send_message(chat_id, f"❌ Ошибка получения рейтинга: {e}")
+            
+            elif call.data == "admin_restart":
+                # Подтверждение сброса смены
+                from telebot import types as t
+                markup = t.InlineKeyboardMarkup(row_width=2)
+                markup.add(
+                    t.InlineKeyboardButton("✅ Да, сбросить", callback_data="confirm_restart"),
+                    t.InlineKeyboardButton("❌ Отмена", callback_data="confirm_restart_cancel")
+                )
+                bot.send_message(chat_id,
+                    "🔄 **Сброс смены**\n\n"
+                    "⚠️ Это необратимое действие! Все данные текущей смены будут потеряны.\n"
+                    "Вы уверены?",
+                    parse_mode="Markdown", reply_markup=markup)
+                bot.answer_callback_query(call.id, "🔄 Подтвердите действие")
+            
+            elif call.data == "admin_log":
+                bot.answer_callback_query(call.id, "📜 Формирую лог...")
+                import datetime as dt
+                from state import user_history
+                history = user_history.get(chat_id)
+                if not history:
+                    bot.send_message(chat_id, "История событий пуста.")
+                else:
+                    try:
+                        filename = f"history_{chat_id}_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                        import os
+                        with open(filename, 'w', encoding='utf-8') as f:
+                            f.write(f"История событий для чата\n" + "="*40 + "\n")
+                            for event in history:
+                                if isinstance(event, dict):
+                                    ts = event.get('timestamp', '')
+                                    user = event.get('username', '')
+                                    desc = event.get('event', '')
+                                    f.write(f"[{ts}] {user}: {desc}\n")
+                                else:
+                                    f.write(f"{event}\n")
+                        with open(filename, 'rb') as f_rb:
+                            bot.send_document(chat_id, f_rb, caption="📜 Лог событий текущей смены.")
+                        os.remove(filename)
+                    except Exception as e:
+                        bot.send_message(chat_id, f"❌ Ошибка: {e}")
+            
+            elif call.data == "admin_broadcast":
+                if user_id != BOSS_ID:
+                    bot.answer_callback_query(call.id, "⛔️ Только для BOSS", show_alert=True)
+                else:
+                    bot.answer_callback_query(call.id, "📢 Рассылка")
+                    bot.send_message(chat_id, "📢 Для рассылки используйте команду `/broadcast [текст]`", parse_mode="Markdown")
+            
+            elif call.data == "admin_roles_stats":
+                bot.answer_callback_query(call.id, "📊 Статистика")
+                from state import chat_data
+                shift = chat_data.get(chat_id)
+                if not shift or not shift.users:
+                    bot.send_message(chat_id, "⚪ Нет активной смены для статистики.")
+                else:
+                    from roles import get_role_emoji, get_role_description
+                    lines = ["📊 **Статистика по ролям**\n"]
+                    for uid, ud in shift.users.items():
+                        role = getattr(ud, 'role', 'караоке_ведущий')
+                        emoji = get_role_emoji(role)
+                        desc = get_role_description(role)
+                        goal = getattr(ud, 'goal', shift.shift_goal)
+                        pct = (ud.count / goal * 100) if goal > 0 else 0
+                        lines.append(f"{emoji} {ud.username}: {ud.count}/{goal} ({pct:.0f}%) — {desc}")
+                    bot.send_message(chat_id, "\n".join(lines), parse_mode="Markdown")
+            
             else:
-                # Здесь будут другие обработчики
                 bot.answer_callback_query(call.id, "🔧 Функция в разработке...")
                 
         except Exception as e:

@@ -1,9 +1,10 @@
 # handlers/callbacks.py
 
 import logging
+import random
 from telebot import types
 
-from utils import is_admin, get_username, init_user_data, save_json_data
+from utils import is_admin, get_username, init_user_data, save_json_data, save_history_event
 from state import chat_data, pending_transfers, ad_templates, user_states
 from phrases import soviet_phrases
 from config import AD_TEMPLATES_FILE
@@ -418,23 +419,246 @@ def register_callback_handlers(bot):
             
             # Очищаем состояние
             user_states.pop(user_id, None)
-            
-            text = "\n".join(text_lines)
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton(f"« К городам {brand.upper()}", callback_data=f"ads_brand_{brand}"))
-            
-            bot.send_message(chat_id, text, reply_markup=markup)
-            
-        elif action == "back_main":
-            # Вернуться к главному меню
-            from .wizards import command_ads_new
-            command_ads_new(call.message)
 
-    @bot.callback_query_handler(func=lambda call: True)
-    def _debug_all_callbacks(call: types.CallbackQuery):
-        """Перехватывает все необработанные колбэки для отладки."""
+    # Обработчик кнопки "Завершить паузу"
+    @bot.callback_query_handler(func=lambda call: call.data.startswith('stop_pause_'))
+    def handle_stop_pause_callback(call: types.CallbackQuery):
+        """Обработка кнопки завершения паузы."""
+        import datetime
+        import pytz
+        
+        chat_id = call.message.chat.id
+        user_id = call.from_user.id
+        target_user_id = int(call.data.replace('stop_pause_', ''))
+        
+        if user_id != target_user_id:
+            return bot.answer_callback_query(call.id, "Эта кнопка не для вас.", show_alert=True)
+        
+        shift = chat_data.get(chat_id)
+        if not shift or user_id not in shift.users:
+            return bot.answer_callback_query(call.id, "Вы не на смене.", show_alert=True)
+        
+        user_data = shift.users.get(user_id)
+        if not user_data or not user_data.on_pause:
+            return bot.answer_callback_query(call.id, "Пауза не активна.", show_alert=True)
+        
+        now_moscow = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+        pause_start = datetime.datetime.fromisoformat(user_data.pause_start_time)
+        pause_duration = (now_moscow - pause_start).total_seconds() / 60
+        
+        user_data.on_pause = False
+        user_data.pause_end_time = now_moscow.isoformat()
+        
         try:
-            bot.answer_callback_query(call.id, f"Необработанный колбэк: {call.data}", show_alert=False)
+            bot.delete_message(chat_id, call.message.message_id)
         except Exception:
             pass
-        logging.warning(f"Получен необработанный callback_data -> {call.data} от {get_username(call.from_user)} в чате {call.message.chat.id}")
+        
+        bot.answer_callback_query(call.id, "⏯️ Пауза завершена!")
+        bot.send_message(chat_id, 
+            f"⏯️ **ПАУЗА ЗАВЕРШЕНА** досрочно!\n\n"
+            f"✅ Все счетчики возобновлены\n"
+            f"📊 Длительность паузы: {int(pause_duration)} минут\n"
+            f"🎯 Можете продолжать работу!",
+            parse_mode="Markdown")
+    
+    # Обработчики для маркетинговой аналитики (кнопки из admin.py)
+    @bot.callback_query_handler(func=lambda call: call.data.startswith('marketing_'))
+    def handle_marketing_callbacks(call: types.CallbackQuery):
+        """Обработчик для кнопок маркетинговой аналитики."""
+        if not is_admin(bot, call.from_user.id, call.message.chat.id):
+            return bot.answer_callback_query(call.id, "⛔️ Доступ запрещен!", show_alert=True)
+        
+        chat_id = call.message.chat.id
+        action = call.data
+        
+        if action == "marketing_detailed":
+            bot.answer_callback_query(call.id, "📊 Формирую детальный отчет...")
+            from database_manager import db
+            analytics = db.get_marketing_analytics(chat_id, days=30)
+            if not analytics:
+                bot.send_message(chat_id, "❌ Недостаточно данных для детального отчета.")
+                return
+            text = "📊 **Детальный маркетинговый отчет** (30 дней)\n\n"
+            text += f"• Смен проведено: {analytics.get('total_shifts', 0)}\n"
+            text += f"• Среднее выполнение: {analytics.get('avg_plan_completion', 0):.1f}%\n"
+            text += f"• Общее время: {analytics.get('total_active_time', 0):.1f} часов\n"
+            text += f"• Средний ритм: {analytics.get('avg_rhythm', 0):.1f} мин/ГС\n"
+            text += f"• Опозданий: {analytics.get('total_late_returns', 0)}\n"
+            bot.send_message(chat_id, text, parse_mode="Markdown")
+            
+        elif action == "marketing_trends":
+            bot.answer_callback_query(call.id, "📈 Анализирую тренды...")
+            from database_manager import db
+            analytics_7 = db.get_marketing_analytics(chat_id, days=7)
+            analytics_30 = db.get_marketing_analytics(chat_id, days=30)
+            if not analytics_7 or not analytics_30:
+                bot.send_message(chat_id, "❌ Недостаточно данных для анализа трендов.")
+                return
+            avg_7 = analytics_7.get('avg_plan_completion', 0)
+            avg_30 = analytics_30.get('avg_plan_completion', 0)
+            trend = "📈 Рост" if avg_7 > avg_30 else "📉 Снижение" if avg_7 < avg_30 else "➡️ Стабильно"
+            text = f"📈 **Тренды**\n\n"
+            text += f"• Выполнение за 7 дней: {avg_7:.1f}%\n"
+            text += f"• Выполнение за 30 дней: {avg_30:.1f}%\n"
+            text += f"• Тренд: {trend}\n"
+            bot.send_message(chat_id, text, parse_mode="Markdown")
+            
+        elif action == "marketing_recommendations":
+            bot.answer_callback_query(call.id, "💡 Формирую рекомендации...")
+            from database_manager import db
+            analytics = db.get_marketing_analytics(chat_id, days=7)
+            if not analytics:
+                bot.send_message(chat_id, "❌ Недостаточно данных для рекомендаций.")
+                return
+            recs = ["💡 **Рекомендации**\n"]
+            avg_completion = analytics.get('avg_plan_completion', 0)
+            if avg_completion < 70:
+                recs.append("⚠️ Выполнение ниже 70% — рассмотрите снижение целей или дополнительную мотивацию.")
+            elif avg_completion < 90:
+                recs.append("👍 Показатели хорошие, есть потенциал для роста.")
+            else:
+                recs.append("✅ Отличные результаты! Можно рассмотреть повышение целей.")
+            avg_rhythm = analytics.get('avg_rhythm', 0)
+            if avg_rhythm > 5:
+                recs.append("🐌 Средний ритм низкий — стоит работать над темпом.")
+            total_lates = analytics.get('total_late_returns', 0)
+            if total_lates > 3:
+                recs.append("⏳ Много опозданий с перерывов — рекомендуется контроль.")
+            bot.send_message(chat_id, "\n".join(recs), parse_mode="Markdown")
+    
+    # Обработчики для подтверждений
+    @bot.callback_query_handler(func=lambda call: call.data.startswith('confirm_'))
+    def handle_confirmation_callbacks(call: types.CallbackQuery):
+        """Обработчик для кнопок подтверждения действий."""
+        chat_id = call.message.chat.id
+        user_id = call.from_user.id
+        action = call.data
+        
+        if action == "confirm_gameover":
+            # Подтверждение /gameover
+            shift = chat_data.get(chat_id)
+            if not shift or user_id not in shift.users:
+                return bot.answer_callback_query(call.id, "Вы не участвуете в смене.", show_alert=True)
+            
+            try:
+                bot.delete_message(chat_id, call.message.message_id)
+            except Exception:
+                pass
+            
+            from scheduler import send_end_of_shift_report_for_chat
+            bot.answer_callback_query(call.id, "🏁 Завершаю смену...")
+            bot.send_message(chat_id, "📊 Формирую финальный отчет...")
+            
+            try:
+                send_end_of_shift_report_for_chat(bot, chat_id)
+                logging.info(f"Смена в чате {chat_id} завершена /gameover пользователем {user_id}")
+            except Exception as e:
+                logging.error(f"Ошибка /gameover в чате {chat_id}: {e}")
+                bot.send_message(chat_id, "❌ Ошибка при завершении смены.")
+                
+        elif action == "confirm_gameover_cancel":
+            try:
+                bot.delete_message(chat_id, call.message.message_id)
+            except Exception:
+                pass
+            bot.answer_callback_query(call.id, "Отменено")
+            bot.send_message(chat_id, "✅ Завершение смены отменено. Продолжаем работать!")
+            
+        elif action == "confirm_restart":
+            if not is_admin(bot, user_id, chat_id):
+                return bot.answer_callback_query(call.id, "❌ Нет прав", show_alert=True)
+            try:
+                bot.delete_message(chat_id, call.message.message_id)
+            except Exception:
+                pass
+            from utils import init_shift_data
+            init_shift_data(chat_id)
+            bot.answer_callback_query(call.id, "🔄 Смена сброшена!")
+            bot.send_message(chat_id, "🔄 Смена успешно сброшена администратором!")
+            logging.info(f"Смена сброшена в чате {chat_id} админом {user_id}")
+            
+        elif action == "confirm_restart_cancel":
+            try:
+                bot.delete_message(chat_id, call.message.message_id)
+            except Exception:
+                pass
+            bot.answer_callback_query(call.id, "Отменено")
+            
+        elif action == "confirm_report":
+            if not is_admin(bot, user_id, chat_id):
+                return bot.answer_callback_query(call.id, "❌ Нет прав", show_alert=True)
+            try:
+                bot.delete_message(chat_id, call.message.message_id)
+            except Exception:
+                pass
+            from scheduler import send_end_of_shift_report_for_chat
+            bot.answer_callback_query(call.id, "📝 Формирую отчет...")
+            bot.send_message(chat_id, "⏳ Формирую финальный отчет досрочно...")
+            send_end_of_shift_report_for_chat(bot, chat_id)
+            
+        elif action == "confirm_report_cancel":
+            try:
+                bot.delete_message(chat_id, call.message.message_id)
+            except Exception:
+                pass
+            bot.answer_callback_query(call.id, "Отменено")
+    
+    # Обработчик выбора роли при /start
+    @bot.callback_query_handler(func=lambda call: call.data.startswith('role_select_'))
+    def handle_role_selection(call: types.CallbackQuery):
+        """Обработка выбора роли при старте смены в выходные."""
+        chat_id = call.message.chat.id
+        user_id = call.from_user.id
+        role = call.data.replace('role_select_', '')
+        
+        try:
+            bot.delete_message(chat_id, call.message.message_id)
+        except Exception:
+            pass
+        
+        # Создаем фейковое сообщение для handle_start
+        bot.answer_callback_query(call.id, f"Выбрана роль: {role}")
+        
+        # Импортируем и вызываем напрямую start-логику
+        from roles import UserRole
+        role_map = {
+            'karaoke': 'караоке',
+            'mc': 'МС'
+        }
+        role_text = role_map.get(role, role)
+        
+        # Отправляем команду /start с ролью от имени пользователя
+        # Через сохранение selected role в user_states
+        user_states[user_id] = {'selected_role': role_text}
+        bot.send_message(chat_id, f"✅ Теперь отправьте команду: `/start {role_text}`", parse_mode="Markdown")
+    
+    # Обработчик кнопки "Отклонить передачу"
+    @bot.callback_query_handler(func=lambda call: call.data.startswith('transfer_decline_'))
+    def handle_transfer_decline(call: types.CallbackQuery):
+        """Обработка отклонения передачи смены."""
+        chat_id = call.message.chat.id
+        user_id = call.from_user.id
+        
+        if chat_id not in pending_transfers:
+            return bot.answer_callback_query(call.id, "Предложение уже неактуально.", show_alert=True)
+        
+        transfer_info = pending_transfers[chat_id]
+        
+        if user_id != transfer_info['to_id']:
+            return bot.answer_callback_query(call.id, "Это предложение адресовано не вам.", show_alert=True)
+        
+        # Отменяем таймер
+        transfer_info['timer'].cancel()
+        del pending_transfers[chat_id]
+        
+        try:
+            bot.delete_message(chat_id, call.message.message_id)
+        except Exception:
+            pass
+        
+        bot.answer_callback_query(call.id, "Передача отклонена")
+        bot.send_message(chat_id, 
+            f"❌ {transfer_info['to_username']} отклонил(а) передачу смены от {transfer_info['from_username']}.")
+        save_history_event(chat_id, user_id, transfer_info['to_username'], 
+            f"Отклонил передачу смены от {transfer_info['from_username']}")

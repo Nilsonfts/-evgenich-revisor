@@ -15,7 +15,7 @@ from config import CHAT_CONFIG_FILE, VOICE_TIMEOUT_MINUTES, BOSS_ID, TIMEZONE_MA
 from g_sheets import get_sheet
 from scheduler import send_end_of_shift_report_for_chat
 from phrases import soviet_phrases
-from database import db  # Импортируем базу данных
+from database_manager import db  # Используем единый database manager
 
 def register_admin_handlers(bot):
     @bot.message_handler(commands=['bot_off', 'выключить'])
@@ -78,32 +78,8 @@ def register_admin_handlers(bot):
             f"• `/bot_status` — проверить статус",
             parse_mode="Markdown")
 
-    @bot.message_handler(commands=['admin'])
-    @admin_required(bot)
-    def handle_admin_panel(message: types.Message):
-        user_id = message.from_user.id
-        panel_text = [
-            "**⚜️ Панель работы администратора ⚜️**\n",
-            "`/status` — 📊 Статус текущей смены",
-            "`/rating` — 📈 Общий рейтинг сотрудников",
-            "`/ads` — 📝 Управление рекламными шаблонами",
-            "`/problems` — 🚨 Поиск проблемных зон",
-            "`/restart` — 🔄 Перезапустить смену",
-            "`/report` — ➡️ Отчет досрочно",
-            "`/log` — 📜 Выгрузить лог смены",
-            "`/time` — ⏱️ Изменить тайм-аут активности",
-            "`/setup_wizard` — 🧙‍♂️ Мастер настройки чата",
-            "",
-            "**🤖 УПРАВЛЕНИЕ БОТОМ:**",
-            "`/bot_status` — Статус работы бота",
-            "`/bot_off` или `/выключить` — Выключить бота",
-            "`/bot_on` или `/включить` — Включить бота",
-        ]
-        if user_id == BOSS_ID:
-             panel_text.append("`/broadcast` — 📢 Рассылка (BOSS)")
-        
-        panel_text.append("\n*Для подробной расшифровки введите /adminhelp*")
-        bot.reply_to(message, "\n".join(panel_text), parse_mode="Markdown")
+    # Примечание: /admin обрабатывается в admin_panel.py (кнопочная версия)
+    # Текстовая справка доступна через /adminhelp
 
     @bot.message_handler(commands=['adminhelp'])
     @admin_required(bot)
@@ -129,52 +105,24 @@ def register_admin_handlers(bot):
         
         bot.reply_to(message, "\n".join(help_text), parse_mode="Markdown")
 
-    @bot.message_handler(commands=['time'])
-    @admin_required(bot)
-    def command_set_timeout(message: types.Message):
-        chat_id = message.chat.id
-        try:
-            args = message.text.split()
-            if len(args) != 2:
-                raise ValueError("Неверное количество аргументов.")
-            
-            new_timeout = int(args[1])
-            if new_timeout <= 0:
-                raise ValueError("Значение должно быть положительным.")
-
-            if str(chat_id) not in chat_configs:
-                chat_configs[str(chat_id)] = {}
-            
-            chat_configs[str(chat_id)]['voice_timeout'] = new_timeout
-            
-            if save_json_data(CHAT_CONFIG_FILE, chat_configs):
-                bot.reply_to(message, f"✅ **Успешно!**\nТеперь напоминания об отсутствии голосовых будут приходить через *{new_timeout} минут* бездействия в этом чате.")
-                logging.info(f"Администратор {message.from_user.id} изменил тайм-аут для чата {chat_id} на {new_timeout} минут.")
-            else:
-                bot.reply_to(message, "❌ **Ошибка!**\nНе удалось сохранить новую настройку. Проверьте логи бота.")
-
-        except (ValueError, IndexError):
-            default_timeout = chat_configs.get(str(chat_id), {}).get('voice_timeout', VOICE_TIMEOUT_MINUTES)
-            bot.reply_to(message, f"**Неверный формат команды.**\n\nИспользуйте: `/time [минуты]`\n*Пример:* `/time 25`\n\nТекущее значение для этого чата: *{default_timeout} минут*.")
+    # /time обрабатывается в user.py (с проверкой прав для установки)
 
 
-    @bot.message_handler(commands=['status'])
-    @admin_required(bot)
-    def command_status(message: types.Message):
-        chat_id = message.chat.id
+    # Примечание: /status и /rating доступны всем через user.py
+    # Здесь только функции для внутреннего использования admin_panel
+    
+    def _admin_status(chat_id):
+        """Внутренняя функция для отображения статуса (вызывается из admin_panel)."""
         shift = chat_data.get(chat_id)
         if not shift or not shift.main_id:
             phrase = random.choice(soviet_phrases.get("system_messages", {}).get('shift_not_started', ["Смена в этом чате еще не началась."]))
             return bot.send_message(chat_id, phrase)
-        
         report_lines = generate_detailed_report(chat_id, shift)
         report_text = "\n".join(report_lines)
         bot.send_message(chat_id, report_text, parse_mode="Markdown")
     
-    @bot.message_handler(commands=['rating'])
-    @admin_required(bot)
-    def command_rating(message: types.Message):
-        chat_id = message.chat.id
+    def _admin_rating(chat_id):
+        """Внутренняя функция для рейтинга (вызывается из admin_panel)."""
         if not pd: return bot.send_message(chat_id, "Модуль для анализа данных (pandas) не загружен.")
         bot.send_message(chat_id, "📊 Анализирую общую статистику из Google Таблицы...")
         worksheet = get_sheet()
@@ -208,10 +156,8 @@ def register_admin_handlers(bot):
             logging.error(f"Ошибка анализа Google Sheets для /rating: {e}")
             bot.send_message(chat_id, "Произошла ошибка при выполнении команды.")
         
-    @bot.message_handler(commands=['problems'])
-    @admin_required(bot)
-    def command_problems(message: types.Message):
-        chat_id = message.chat.id
+    def _admin_problems(chat_id):
+        """Внутренняя функция для проблемных зон (вызывается из admin_panel)."""
         if not pd: return bot.send_message(chat_id, "Модуль для анализа данных (pandas) не загружен.")
         bot.send_message(chat_id, "🚨 Ищу проблемные зоны в Google Таблице...")
         worksheet = get_sheet()
@@ -250,13 +196,31 @@ def register_admin_handlers(bot):
         except Exception as e:
             logging.error(f"Ошибка поиска проблемных зон: {e}")
             bot.send_message(chat_id, f"Произошла ошибка при анализе: {e}")
-    
+
+    @bot.message_handler(commands=['problems'])
+    @admin_required(bot)
+    def command_problems(message: types.Message):
+        _admin_problems(message.chat.id)
+
+    def _admin_report(chat_id):
+        """Внутренняя функция для формирования отчета (вызывается из admin_panel)."""
+        bot.send_message(chat_id, "⏳ Формирую финальный отчет досрочно...")
+        send_end_of_shift_report_for_chat(bot, chat_id)
+
     @bot.message_handler(commands=['report'])
     @admin_required(bot)
     def command_report(message: types.Message):
-        """Досрочный отчет по команде администратора."""
-        bot.send_message(message.chat.id, "⏳ Формирую финальный отчет досрочно по команде администратора...")
-        send_end_of_shift_report_for_chat(bot, message.chat.id)
+        """Досрочный отчет по команде администратора — с подтверждением."""
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("✅ Да, сформировать", callback_data="confirm_report"),
+            types.InlineKeyboardButton("❌ Отмена", callback_data="confirm_report_cancel")
+        )
+        bot.send_message(message.chat.id, 
+            "📝 **Досрочный отчёт**\n\n"
+            "⚠️ Это завершит текущую смену и сформирует финальный отчёт.\n"
+            "Вы уверены?",
+            parse_mode="Markdown", reply_markup=markup)
             
     @bot.message_handler(commands=['log'])
     @admin_required(bot)
@@ -268,7 +232,15 @@ def register_admin_handlers(bot):
         try:
             filename = f"history_{chat_id}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
             with open(filename, 'w', encoding='utf-8') as f:
-                f.write(f"История событий для чата: {get_chat_title(bot, chat_id)}\n" + "="*40 + "\n" + "\n".join(history))
+                f.write(f"История событий для чата: {get_chat_title(bot, chat_id)}\n" + "="*40 + "\n")
+                for event in history:
+                    if isinstance(event, dict):
+                        ts = event.get('timestamp', '')
+                        user = event.get('username', '')
+                        desc = event.get('event', '')
+                        f.write(f"[{ts}] {user}: {desc}\n")
+                    else:
+                        f.write(f"{event}\n")
             with open(filename, 'rb') as f_rb:
                 bot.send_document(chat_id, f_rb, caption="Лог событий текущей смены.")
             os.remove(filename)
@@ -331,12 +303,20 @@ def register_admin_handlers(bot):
         # Получаем текущее время в разных часовых поясах
         moscow_time = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
         
-        tz_name = config.get('timezone', 'Europe/Moscow')
+        # ИСПРАВЛЕНО: timezone хранится как число, конвертируем через TIMEZONE_MAP
+        timezone_offset = config.get('timezone', 0)
+        tz_key = f"+{timezone_offset}" if timezone_offset > 0 else str(timezone_offset)
+        tz_obj = TIMEZONE_MAP.get(tz_key)
+        tz_name = str(tz_obj) if tz_obj else 'Europe/Moscow'
         try:
             local_tz = pytz.timezone(tz_name)
             local_time = datetime.datetime.now(local_tz)
         except Exception as e:
             local_time = f"Ошибка: {e}"
+        
+        # ИСПРАВЛЕНО: end_time из schedule.end
+        schedule = config.get('schedule', {})
+        end_time_display = schedule.get('end', config.get('end_time', '04:00 (по умолчанию)'))
         
         debug_text = [
             "🔍 **Диагностика конфигурации чата**\n",
@@ -345,8 +325,8 @@ def register_admin_handlers(bot):
             f"**Локальное время:** `{local_time.strftime('%H:%M:%S %d.%m.%Y') if hasattr(local_time, 'strftime') else local_time}`",
             "",
             "**Конфигурация:**",
-            f"  • Часовой пояс: `{tz_name}`",
-            f"  • Время окончания: `{config.get('end_time', '04:00 (по умолчанию)')}`",
+            f"  • Часовой пояс: `{tz_name}` (смещение: {timezone_offset})",
+            f"  • Время окончания: `{end_time_display}`",
             f"  • Концепция: `{config.get('concept', 'Не задана')}`",
             f"  • Тайм-аут ГС: `{config.get('voice_timeout', VOICE_TIMEOUT_MINUTES)} мин`",
             "",

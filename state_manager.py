@@ -7,7 +7,7 @@ import copy
 from dataclasses import asdict
 
 from state import data_lock
-from database import db  # Импортируем базу данных
+from database_manager import db  # Импортируем базу данных
 
 # Используем пути из конфигурации с поддержкой Railway Volume
 from config import VOLUME_PATH
