@@ -16,9 +16,6 @@ COPY . .
 # Создаем папку для данных
 RUN mkdir -p data
 
-# Устанавливаем права на выполнение скрипта
-RUN chmod +x deploy.sh
-
 # Указываем переменные окружения
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
