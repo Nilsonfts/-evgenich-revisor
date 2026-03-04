@@ -9,7 +9,7 @@ from models import ShiftData, UserData
 
 # Импорты для SQLAlchemy
 try:
-    from sqlalchemy import create_engine, Column, Integer, String, Boolean, Text, DateTime, Float, JSON
+    from sqlalchemy import create_engine, Column, Integer, String, Boolean, Text, DateTime, Float, JSON, text
     from sqlalchemy.ext.declarative import declarative_base
     from sqlalchemy.orm import sessionmaker, Session
     from sqlalchemy.dialects.postgresql import UUID
@@ -113,7 +113,13 @@ else:
         
         def __init__(self, database_url: str = None):
             self.database_url = database_url or DATABASE_URL
-            self.engine = create_engine(self.database_url)
+            self.engine = create_engine(
+                self.database_url,
+                pool_pre_ping=True,
+                pool_recycle=300,
+                pool_size=5,
+                max_overflow=10
+            )
             self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
             self.init_database()
         
@@ -132,7 +138,7 @@ else:
                 session = self.get_session()
                 try:
                     # Простой тест запрос
-                    session.execute("SELECT 1")
+                    session.execute(text("SELECT 1"))
                     return True
                 finally:
                     session.close()
