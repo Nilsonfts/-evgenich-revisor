@@ -25,17 +25,15 @@ def register_shift_handlers(bot):
     @admin_required(bot)
     def handle_restart(message: types.Message):
         chat_id = message.chat.id
-        # Подтверждение через кнопки
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("✅ Да, сбросить", callback_data="confirm_restart"),
-            types.InlineKeyboardButton("❌ Отмена", callback_data="confirm_restart_cancel")
-        )
-        bot.send_message(chat_id, 
-            "🔄 **Сброс смены**\n\n"
-            "⚠️ Внимание, это необратимо! Все данные текущей смены улетят, как 'бобёр' в закат.\n"
-            "Ты уверен, босс?",
-            parse_mode="Markdown", reply_markup=markup)
+        init_shift_data(chat_id)
+        safe_reply(bot, message, "🔄 Смена сброшена! Все счётчики на нуле. Таков путь. 💪", parse_mode=None)
+        logging.info(f"[RESTART] Смена сброшена в чате {chat_id} пользователем {message.from_user.id}")
+        try:
+            from state_manager import save_state
+            from state import chat_data, user_history
+            save_state(bot, chat_data, user_history)
+        except Exception as e:
+            logging.warning(f"[RESTART] Не удалось сохранить состояние: {e}")
 
     @bot.message_handler(commands=['startmc', 'стартmc'])
     def handle_startmc(message: types.Message):
