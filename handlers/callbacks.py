@@ -478,6 +478,7 @@ def register_callback_handlers(bot):
     @bot.callback_query_handler(func=lambda call: call.data.startswith('confirm_'))
     def handle_confirmation_callbacks(call: types.CallbackQuery):
         """Обработчик для кнопок подтверждения действий."""
+        logging.info(f"[CONFIRM] Получен callback: data={call.data}, user={call.from_user.id}, chat={call.message.chat.id}")
         try:
             chat_id = call.message.chat.id
             user_id = call.from_user.id
@@ -513,7 +514,10 @@ def register_callback_handlers(bot):
                 bot.send_message(chat_id, "✅ Завершение отменено. Продолжаем 'гойду'! ⚔️")
                 
             elif action == "confirm_restart":
-                if not is_admin(bot, user_id, chat_id):
+                logging.info(f"[CONFIRM_RESTART] Проверяю права user={user_id} chat={chat_id}")
+                admin_check = is_admin(bot, user_id, chat_id)
+                logging.info(f"[CONFIRM_RESTART] is_admin={admin_check}")
+                if not admin_check:
                     return bot.answer_callback_query(call.id, "❌ Нет прав", show_alert=True)
                 try:
                     bot.delete_message(chat_id, call.message.message_id)
@@ -521,9 +525,10 @@ def register_callback_handlers(bot):
                     pass
                 from utils import init_shift_data
                 init_shift_data(chat_id)
-                bot.answer_callback_query(call.id, "🔄 Сбросил!")
-                bot.send_message(chat_id, "🔄 Смена сброшена админом! Все счётчики на нуле. 'Таков путь'. 💪")
-                logging.info(f"Смена сброшена в чате {chat_id} админом {user_id}")
+                logging.info(f"[CONFIRM_RESTART] Смена сброшена, отправляю ответ")
+                bot.answer_callback_query(call.id, "Сброшено!")
+                bot.send_message(chat_id, "🔄 Смена сброшена админом! Все счётчики на нуле. Таков путь. 💪")
+                logging.info(f"[CONFIRM_RESTART] Готово для чата {chat_id}")
                 
             elif action == "confirm_restart_cancel":
                 try:
@@ -540,8 +545,8 @@ def register_callback_handlers(bot):
                 except Exception:
                     pass
                 from scheduler import send_end_of_shift_report_for_chat
-                bot.answer_callback_query(call.id, "📝 Сейчас сделаем...")
-                bot.send_message(chat_id, "⏳ Формирую отчёт... 'Алгоритмы считают ваши провалы'. 🧠")
+                bot.answer_callback_query(call.id, "Формирую...")
+                bot.send_message(chat_id, "⏳ Формирую отчёт...")
                 send_end_of_shift_report_for_chat(bot, chat_id)
                 
             elif action == "confirm_report_cancel":
@@ -551,11 +556,12 @@ def register_callback_handlers(bot):
                     pass
                 bot.answer_callback_query(call.id, "Отменено")
             else:
+                logging.warning(f"[CONFIRM] Неизвестный action: {action}")
                 bot.answer_callback_query(call.id)
         except Exception as e:
-            logging.error(f"Ошибка в обработчике confirm_: {e}", exc_info=True)
+            logging.error(f"[CONFIRM] ОШИБКА: {e}", exc_info=True)
             try:
-                bot.answer_callback_query(call.id, f"❌ Ошибка: {e}", show_alert=True)
+                bot.answer_callback_query(call.id, f"Ошибка: {e}", show_alert=True)
             except Exception:
                 pass
     
