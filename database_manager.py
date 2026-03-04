@@ -284,17 +284,32 @@ else:
 
     class _LazyDB:
         """Прокси для ленивой инициализации базы данных."""
+        _db_available = True
+
         def _get_db(self):
             global _db_instance
             if _db_instance is None:
-                if DB_TYPE == "postgresql":
-                    _db_instance = PostgreSQLDatabase()
-                else:
-                    from database import BotDatabase
-                    _db_instance = BotDatabase()
+                try:
+                    if DB_TYPE == "postgresql":
+                        _db_instance = PostgreSQLDatabase()
+                    else:
+                        from database import BotDatabase
+                        _db_instance = BotDatabase()
+                    self._db_available = True
+                except Exception as e:
+                    self._db_available = False
+                    logging.warning(f"БД недоступна: {e}")
+                    raise
             return _db_instance
 
         def __getattr__(self, name):
-            return getattr(self._get_db(), name)
+            try:
+                return getattr(self._get_db(), name)
+            except Exception:
+                # Возвращаем заглушку, которая не крашит бота
+                def _fallback(*args, **kwargs):
+                    logging.warning(f"БД недоступна, вызов db.{name}() пропущен")
+                    return None
+                return _fallback
 
     db = _LazyDB()

@@ -45,7 +45,11 @@ class AdminPanel:
         )
         
         # Управление ботом
-        bot_status = "🟢" if db.is_bot_enabled(chat_id) else "🔴"
+        try:
+            bot_enabled = db.is_bot_enabled(chat_id)
+            bot_status = "🟢" if bot_enabled else "🔴"
+        except Exception:
+            bot_status = "🟢"
         markup.add(
             types.InlineKeyboardButton(f"{bot_status} Бот вкл/выкл", callback_data="admin_toggle_bot")
         )
@@ -158,7 +162,10 @@ class AdminPanel:
         """Создает меню управления ботом"""
         markup = types.InlineKeyboardMarkup(row_width=1)
         
-        is_enabled = db.is_bot_enabled(chat_id)
+        try:
+            is_enabled = db.is_bot_enabled(chat_id)
+        except Exception:
+            is_enabled = True
         
         if is_enabled:
             markup.add(
@@ -247,15 +254,21 @@ def register_admin_panel_handlers(bot):
                 
             elif call.data == "admin_bot_enable":
                 admin_username = get_username(call.from_user)
-                db.set_bot_enabled(chat_id, True, user_id)
-                bot.answer_callback_query(call.id, "🟢 Бот включен!")
+                try:
+                    db.set_bot_enabled(chat_id, True, user_id)
+                    bot.answer_callback_query(call.id, "🟢 Бот включен!")
+                except Exception:
+                    bot.answer_callback_query(call.id, "⚠️ БД недоступна, но бот работает", show_alert=True)
                 markup = AdminPanel.create_main_menu(user_id, chat_id)
                 bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=markup)
                 
             elif call.data == "admin_bot_disable":
                 admin_username = get_username(call.from_user)
-                db.set_bot_enabled(chat_id, False, user_id)
-                bot.answer_callback_query(call.id, "🔴 Бот выключен!")
+                try:
+                    db.set_bot_enabled(chat_id, False, user_id)
+                    bot.answer_callback_query(call.id, "🔴 Бот выключен!")
+                except Exception:
+                    bot.answer_callback_query(call.id, "⚠️ БД недоступна", show_alert=True)
                 markup = AdminPanel.create_main_menu(user_id, chat_id)
                 bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=markup)
                 

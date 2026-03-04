@@ -66,6 +66,8 @@ def register_admin_handlers(bot):
         """Показывает статус работы бота."""
         chat_id = message.chat.id
         is_enabled = db.is_bot_enabled(chat_id)
+        if is_enabled is None:
+            is_enabled = True  # Если БД недоступна, считаем бота включенным
         
         status_icon = "🟢" if is_enabled else "🔴"
         status_text = "включен" if is_enabled else "выключен"
