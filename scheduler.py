@@ -226,8 +226,18 @@ def check_for_shift_end(bot):
 
     for chat_id_str in all_chats_to_check:
         config = chat_configs.get(chat_id_str, {})
-        tz_name = config.get('timezone', 'Europe/Moscow')
-        end_time_str = config.get('end_time', '04:00')  # Дефолтное время 04:00
+        
+        # Визард сохраняет timezone как число (offset от МСК), поддерживаем оба формата
+        tz_setting = config.get('timezone', 'Europe/Moscow')
+        if isinstance(tz_setting, (int, float)):
+            # Offset от МСК: МСК = UTC+3, значит итоговый UTC offset = 3 + tz_setting
+            utc_offset = 3 + int(tz_setting)
+            tz_name = f"Etc/GMT{-utc_offset:+d}" if utc_offset != 0 else "Etc/GMT"
+        else:
+            tz_name = tz_setting
+        
+        # Визард сохраняет время в config['schedule']['end'], поддерживаем оба формата
+        end_time_str = config.get('end_time') or config.get('schedule', {}).get('end') or '04:00'
         
         try:
             local_tz = pytz.timezone(tz_name)

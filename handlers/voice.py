@@ -31,7 +31,7 @@ def analyze_voice_thread(bot, audio_path: str, user_data: UserData, chat_id: int
         return
 
     chat_config = chat_configs.get(str(chat_id), {})
-    brand, city = chat_config.get("brand"), chat_config.get("city")
+    brand, city = chat_config.get("concept") or chat_config.get("brand"), chat_config.get("city")
     if not brand or not city or not (templates_for_location := ad_templates.get(brand, {}).get(city)):
         if os.path.exists(audio_path): os.remove(audio_path)
         return

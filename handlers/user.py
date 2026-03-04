@@ -123,7 +123,7 @@ def register_user_handlers(bot):
         help_text = get_help_text()
         bot.send_message(message.chat.id, help_text, parse_mode='Markdown')
     
-    @bot.message_handler(commands=['helpadmin', 'админпомощь'])
+    @bot.message_handler(commands=['helpadmin', 'adminhelp', 'админпомощь'])
     def handle_admin_help(message: types.Message):
         """Обработчик команды помощи для админов."""
         from utils import is_admin

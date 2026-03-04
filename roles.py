@@ -32,13 +32,13 @@ DAY_TYPE_MAPPING = {
 DEFAULT_ROLE_CONFIG = {
     DayType.WEEKDAY: {
         "roles": [UserRole.KARAOKE_HOST.value],
-        "goals": {UserRole.KARAOKE_HOST.value: 18}
+        "goals": {UserRole.KARAOKE_HOST.value: 15}
     },
     DayType.WEEKEND: {
         "roles": [UserRole.KARAOKE_HOST.value, UserRole.MC.value],
         "goals": {
-            UserRole.KARAOKE_HOST.value: 18,
-            UserRole.MC.value: 17
+            UserRole.KARAOKE_HOST.value: 15,
+            UserRole.MC.value: 10
         }
     }
 }

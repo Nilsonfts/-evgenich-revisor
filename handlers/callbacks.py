@@ -57,68 +57,7 @@ def register_callback_handlers(bot):
         bot.send_message(chat_id, text)
         save_history_event(chat_id, user_id, transfer_info['to_username'], f"Принял смену от {transfer_info['from_username']}")
 
-    # Этот хендлер обрабатывает кнопки, связанные с меню /ads из wizards.py
-    @bot.callback_query_handler(func=lambda call: call.data.startswith('ad_'))
-    def handle_ad_callbacks(call: types.CallbackQuery):
-        if not is_admin(bot, call.from_user.id, call.message.chat.id):
-            return bot.answer_callback_query(call.id, "⛔️ Доступ запрещен!", show_alert=True)
-        
-        chat_id = call.message.chat.id
-        message_id = call.message.message_id
-        
-        bot.answer_callback_query(call.id)
-        parts = call.data.split('_')
-        action = parts[1]
-
-        try: 
-            bot.delete_message(chat_id, message_id)
-        except Exception as e:
-            logging.warning(f"Не удалось удалить сообщение {message_id} в чате {chat_id}: {e}")
-
-        # Импортируем локально, чтобы избежать циклических зависимостей
-        from .wizards import show_ad_cities_menu, show_ad_actions_menu, show_templates_for_deletion, command_ads
-
-        if action == "brand":
-            brand = parts[2]
-            show_ad_cities_menu(bot, chat_id, brand)
-        elif action == "city":
-            brand, city = parts[2], parts[3]
-            show_ad_actions_menu(bot, chat_id, brand, city)
-        elif action == "view":
-            brand, city = parts[2], parts[3]
-            templates = ad_templates.get(brand, {}).get(city, {})
-            if not templates: text = "Шаблонов для этого города пока нет."
-            else:
-                text_lines = [f"📄 **Шаблоны для {brand.upper()} / {city.capitalize()}**\n"]
-                for name, content in templates.items():
-                    text_lines.append(f"🔹 *{name}*:\n`{content}`\n")
-                text = "\n".join(text_lines)
-            bot.send_message(chat_id, text, parse_mode="Markdown")
-        elif action == "addform":
-            brand, city = parts[2], parts[3]
-            user_id = call.from_user.id
-            user_states[user_id] = {"state": "awaiting_ad_template", "brand": brand, "city": city}
-            bot.send_message(chat_id, "Отправьте сообщение в формате:\n\n`Название шаблона`\n`Текст шаблона...`\n\nДля отмены введите /cancel", parse_mode="Markdown")
-        elif action == "delform":
-            brand, city = parts[2], parts[3]
-            show_templates_for_deletion(bot, chat_id, brand, city)
-        elif action == "delete":
-            brand, city, tpl_key = parts[2], parts[3], "_".join(parts[4:])
-            if tpl_key in ad_templates.get(brand, {}).get(city, {}):
-                del ad_templates[brand][city][tpl_key]
-                if save_json_data(AD_TEMPLATES_FILE, ad_templates):
-                     bot.send_message(chat_id, f"Шаблон '{tpl_key}' удален.")
-                     # После удаления снова показываем список для удаления
-                     show_templates_for_deletion(bot, chat_id, brand, city)
-                else:
-                    bot.send_message(chat_id, "Ошибка сохранения!")
-        elif action == 'backtobrand':
-            command_ads(call.message)
-        elif action == 'backtocity':
-            brand = parts[2]
-            show_ad_cities_menu(bot, chat_id, brand)
-
-    # Полностью новые обработчики для системы рекламы /ads
+    # Обработчики для системы рекламы /ads
     @bot.callback_query_handler(func=lambda call: call.data.startswith('ads_'))
     def handle_ads_callbacks(call: types.CallbackQuery):
         """Обработчик для системы рекламных шаблонов."""
@@ -635,24 +574,26 @@ def register_callback_handlers(bot):
         }
         role_text = role_map.get(role, role)
         
-        # Создаём фейковое сообщение и вызываем handle_start напрямую
+        # Создаём фейковое сообщение и отправляем через process_new_messages
         try:
-            fake_msg = types.Message(
-                message_id=call.message.message_id,
-                from_user=call.from_user,
-                date=None,
-                chat=call.message.chat,
-                content_type='text',
-                options={'text': f'/start {role_text}'},
-                json_string=''
-            )
-            fake_msg.text = f'/start {role_text}'
-            # Находим обработчик /start и вызываем
-            from .shift import register_shift_handlers
-            # Просто отправляем команду в чат — бот перехватит
-            bot.send_message(chat_id, f"🎭 {call.from_user.first_name} выбрал роль: *{role_text}*", parse_mode="Markdown")
-            # Уведомляем пользователя отправить команду (единственный надежный способ)
-            bot.send_message(chat_id, f"👉 Отправьте: `/start {role_text}`", parse_mode="Markdown")
+            import time as time_mod
+            fake_json = {
+                'message_id': call.message.message_id,
+                'from': {
+                    'id': call.from_user.id,
+                    'is_bot': False,
+                    'first_name': call.from_user.first_name or '',
+                    'username': call.from_user.username or ''
+                },
+                'chat': {
+                    'id': call.message.chat.id,
+                    'type': call.message.chat.type
+                },
+                'date': int(time_mod.time()),
+                'text': f'/start {role_text}'
+            }
+            fake_msg = types.Message.de_json(fake_json)
+            bot.process_new_messages([fake_msg])
         except Exception as e:
             logging.error(f"Ошибка при выборе роли: {e}")
             bot.send_message(chat_id, f"👉 Отправьте: `/start {role_text}`", parse_mode="Markdown")
