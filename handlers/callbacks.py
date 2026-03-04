@@ -478,78 +478,86 @@ def register_callback_handlers(bot):
     @bot.callback_query_handler(func=lambda call: call.data.startswith('confirm_'))
     def handle_confirmation_callbacks(call: types.CallbackQuery):
         """Обработчик для кнопок подтверждения действий."""
-        chat_id = call.message.chat.id
-        user_id = call.from_user.id
-        action = call.data
-        
-        if action == "confirm_gameover":
-            # Подтверждение /gameover
-            shift = chat_data.get(chat_id)
-            if not shift or user_id not in shift.users:
-                return bot.answer_callback_query(call.id, "Вы не участвуете в смене.", show_alert=True)
+        try:
+            chat_id = call.message.chat.id
+            user_id = call.from_user.id
+            action = call.data
             
-            try:
-                bot.delete_message(chat_id, call.message.message_id)
-            except Exception:
-                pass
-            
-            from scheduler import send_end_of_shift_report_for_chat
-            bot.answer_callback_query(call.id, "🏁 Завершаю смену...")
-            bot.send_message(chat_id, "📊 Формирую финальный отчет...")
-            
-            try:
-                send_end_of_shift_report_for_chat(bot, chat_id)
-                logging.info(f"Смена в чате {chat_id} завершена /gameover пользователем {user_id}")
-            except Exception as e:
-                logging.error(f"Ошибка /gameover в чате {chat_id}: {e}")
-                bot.send_message(chat_id, "❌ Ошибка при завершении смены.")
+            if action == "confirm_gameover":
+                shift = chat_data.get(chat_id)
+                if not shift or user_id not in shift.users:
+                    return bot.answer_callback_query(call.id, "Вы не участвуете в смене.", show_alert=True)
                 
-        elif action == "confirm_gameover_cancel":
+                try:
+                    bot.delete_message(chat_id, call.message.message_id)
+                except Exception:
+                    pass
+                
+                from scheduler import send_end_of_shift_report_for_chat
+                bot.answer_callback_query(call.id, "🏁 Завершаю смену...")
+                bot.send_message(chat_id, "📊 Формирую финальный отчет...")
+                
+                try:
+                    send_end_of_shift_report_for_chat(bot, chat_id)
+                    logging.info(f"Смена в чате {chat_id} завершена /gameover пользователем {user_id}")
+                except Exception as e:
+                    logging.error(f"Ошибка /gameover в чате {chat_id}: {e}")
+                    bot.send_message(chat_id, "❌ Ошибка при завершении смены.")
+                    
+            elif action == "confirm_gameover_cancel":
+                try:
+                    bot.delete_message(chat_id, call.message.message_id)
+                except Exception:
+                    pass
+                bot.answer_callback_query(call.id, "Отменено")
+                bot.send_message(chat_id, "✅ Завершение отменено. Продолжаем 'гойду'! ⚔️")
+                
+            elif action == "confirm_restart":
+                if not is_admin(bot, user_id, chat_id):
+                    return bot.answer_callback_query(call.id, "❌ Нет прав", show_alert=True)
+                try:
+                    bot.delete_message(chat_id, call.message.message_id)
+                except Exception:
+                    pass
+                from utils import init_shift_data
+                init_shift_data(chat_id)
+                bot.answer_callback_query(call.id, "🔄 Сбросил!")
+                bot.send_message(chat_id, "🔄 Смена сброшена админом! Все счётчики на нуле. 'Таков путь'. 💪")
+                logging.info(f"Смена сброшена в чате {chat_id} админом {user_id}")
+                
+            elif action == "confirm_restart_cancel":
+                try:
+                    bot.delete_message(chat_id, call.message.message_id)
+                except Exception:
+                    pass
+                bot.answer_callback_query(call.id, "Отменено")
+                
+            elif action == "confirm_report":
+                if not is_admin(bot, user_id, chat_id):
+                    return bot.answer_callback_query(call.id, "❌ Нет прав", show_alert=True)
+                try:
+                    bot.delete_message(chat_id, call.message.message_id)
+                except Exception:
+                    pass
+                from scheduler import send_end_of_shift_report_for_chat
+                bot.answer_callback_query(call.id, "📝 Сейчас сделаем...")
+                bot.send_message(chat_id, "⏳ Формирую отчёт... 'Алгоритмы считают ваши провалы'. 🧠")
+                send_end_of_shift_report_for_chat(bot, chat_id)
+                
+            elif action == "confirm_report_cancel":
+                try:
+                    bot.delete_message(chat_id, call.message.message_id)
+                except Exception:
+                    pass
+                bot.answer_callback_query(call.id, "Отменено")
+            else:
+                bot.answer_callback_query(call.id)
+        except Exception as e:
+            logging.error(f"Ошибка в обработчике confirm_: {e}", exc_info=True)
             try:
-                bot.delete_message(chat_id, call.message.message_id)
+                bot.answer_callback_query(call.id, f"❌ Ошибка: {e}", show_alert=True)
             except Exception:
                 pass
-            bot.answer_callback_query(call.id, "Отменено")
-            bot.send_message(chat_id, "✅ Завершение отменено. Продолжаем 'гойду'! ⚔️")
-            
-        elif action == "confirm_restart":
-            if not is_admin(bot, user_id, chat_id):
-                return bot.answer_callback_query(call.id, "❌ Нет прав", show_alert=True)
-            try:
-                bot.delete_message(chat_id, call.message.message_id)
-            except Exception:
-                pass
-            from utils import init_shift_data
-            init_shift_data(chat_id)
-            bot.answer_callback_query(call.id, "🔄 Сбросил! 'Гойда' сначала!")
-            bot.send_message(chat_id, "🔄 Смена сброшена админом! Все счётчики на нуле. 'Таков путь'. 💪")
-            logging.info(f"Смена сброшена в чате {chat_id} админом {user_id}")
-            
-        elif action == "confirm_restart_cancel":
-            try:
-                bot.delete_message(chat_id, call.message.message_id)
-            except Exception:
-                pass
-            bot.answer_callback_query(call.id, "Отменено")
-            
-        elif action == "confirm_report":
-            if not is_admin(bot, user_id, chat_id):
-                return bot.answer_callback_query(call.id, "❌ Нет прав", show_alert=True)
-            try:
-                bot.delete_message(chat_id, call.message.message_id)
-            except Exception:
-                pass
-            from scheduler import send_end_of_shift_report_for_chat
-            bot.answer_callback_query(call.id, "📝 Сейчас сделаем...")
-            bot.send_message(chat_id, "⏳ Формирую отчёт... 'Алгоритмы считают ваши провалы'. 🧠")
-            send_end_of_shift_report_for_chat(bot, chat_id)
-            
-        elif action == "confirm_report_cancel":
-            try:
-                bot.delete_message(chat_id, call.message.message_id)
-            except Exception:
-                pass
-            bot.answer_callback_query(call.id, "Отменено")
     
     # Обработчик выбора роли при /start
     @bot.callback_query_handler(func=lambda call: call.data.startswith('role_select_'))
