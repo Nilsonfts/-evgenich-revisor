@@ -7,7 +7,7 @@ import logging
 from telebot import types
 from typing import Optional
 
-from utils import is_admin, get_username
+from utils import is_admin, get_username, safe_reply
 from config import BOSS_ID
 from database_manager import db  # Единый database manager
 from roles import (
@@ -186,7 +186,7 @@ def register_admin_panel_handlers(bot):
         
         # Проверяем права доступа
         if not is_admin(bot, user_id, chat_id):
-            bot.reply_to(message, "❌ У вас нет прав администратора для использования этой команды.")
+            safe_reply(bot, message, "❌ У вас нет прав администратора для использования этой команды.")
             return
         
         username = get_username(message.from_user)

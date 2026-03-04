@@ -9,7 +9,7 @@ import time
 import pytz
 from telebot import types
 
-from utils import admin_required, save_json_data, generate_detailed_report, get_username, get_chat_title
+from utils import admin_required, save_json_data, generate_detailed_report, get_username, get_chat_title, safe_reply
 from state import chat_data, user_history, chat_configs, user_states
 from config import CHAT_CONFIG_FILE, VOICE_TIMEOUT_MINUTES, BOSS_ID, TIMEZONE_MAP
 from g_sheets import get_sheet
@@ -70,7 +70,7 @@ def register_admin_handlers(bot):
         status_icon = "🟢" if is_enabled else "🔴"
         status_text = "включен" if is_enabled else "выключен"
         
-        bot.reply_to(message, 
+        safe_reply(bot, message, 
             f"{status_icon} **Статус бота:** {status_text}\n\n"
             f"Команды управления:\n"
             f"• `/bot_off` или `/выключить` — выключить бота\n"
@@ -239,7 +239,7 @@ def register_admin_handlers(bot):
         
         text_to_send = message.text
         if not text_to_send: 
-            msg = bot.reply_to(message, "Текст рассылки не может быть пустым. Попробуйте снова или введите /cancel.")
+            msg = safe_reply(bot, message, "Текст рассылки не может быть пустым. Попробуйте снова или введите /cancel.")
             bot.register_next_step_handler(msg, process_broadcast_text)
             return
 

@@ -8,7 +8,7 @@ import pandas as pd
 from collections import Counter
 from telebot import types
 
-from utils import get_username, get_username_with_at, is_admin
+from utils import get_username, get_username_with_at, is_admin, safe_reply
 from state import chat_data
 from g_sheets import get_sheet
 from phrases import soviet_phrases
@@ -23,15 +23,15 @@ def register_user_handlers(bot):
         
         if not shift or not shift.main_id:
             phrase = random.choice(soviet_phrases.get("system_messages", {}).get('shift_not_started', ["Смена в этом чате еще не началась."]))
-            return bot.reply_to(message, phrase)
+            return safe_reply(bot, message, phrase)
         
         # ИСПРАВЛЕНО: Проверяем, что пользователь участник смены (не только main_id)
         if user_id not in shift.users:
-            return bot.reply_to(message, "Вы не участвуете в текущей смене. Используйте /start для начала.")
+            return safe_reply(bot, message, "Вы не участвуете в текущей смене. Используйте /start для начала.")
             
         user_data = shift.users.get(user_id)
         if not user_data:
-            return bot.reply_to(message, "Не удалось найти ваши данные по текущей смене.")
+            return safe_reply(bot, message, "Не удалось найти ваши данные по текущей смене.")
 
         # Используем персональную цель пользователя (или общую цель смены)
         shift_goal = getattr(user_data, 'goal', shift.shift_goal)
@@ -72,15 +72,15 @@ def register_user_handlers(bot):
             report_lines.append("\n**📝 Анализ контента:**")
             for ad, count in ad_counts.items():
                 report_lines.append(f"✔️ {ad} (x{count})")
-        bot.reply_to(message, "\n".join(report_lines), parse_mode="Markdown")
+        safe_reply(bot, message, "\n".join(report_lines), parse_mode="Markdown")
 
     @bot.message_handler(commands=['сводка'])
     def my_total_stats(message: types.Message):
-        if not pd: return bot.reply_to(message, "Модуль для анализа данных (pandas) не загружен.")
+        if not pd: return safe_reply(bot, message, "Модуль для анализа данных (pandas) не загружен.")
         
         user_id = message.from_user.id
         username = get_username_with_at(message.from_user)
-        bot.reply_to(message, f"📊 Собираю вашу общую статистику из Google Таблицы, {username}. Минутку...")
+        safe_reply(bot, message, f"📊 Собираю вашу общую статистику из Google Таблицы, {username}. Минутку...")
         
         worksheet = get_sheet()
         if not worksheet: return bot.send_message(message.chat.id, "Не удалось подключиться к Google Таблице.")
@@ -128,7 +128,7 @@ def register_user_handlers(bot):
         """Обработчик команды помощи для админов."""
         from utils import is_admin
         if not is_admin(bot, message.from_user.id, message.chat.id):
-            return bot.reply_to(message, "❌ Эта команда доступна только администраторам.")
+            return safe_reply(bot, message, "❌ Эта команда доступна только администраторам.")
         
         from help_system import get_admin_help_text
         help_text = get_admin_help_text()
@@ -172,7 +172,7 @@ def register_user_handlers(bot):
         # Если есть аргумент — это команда установки тайм-аута (только для админов)
         if len(args) > 1:
             if not is_admin(bot, message.from_user.id, message.chat.id):
-                return bot.reply_to(message, "❌ Установка тайм-аута доступна только администраторам.")
+                return safe_reply(bot, message, "❌ Установка тайм-аута доступна только администраторам.")
             
             chat_id = message.chat.id
             try:
@@ -186,13 +186,13 @@ def register_user_handlers(bot):
                 chat_configs[str(chat_id)]['voice_timeout'] = new_timeout
                 
                 if save_json_data(CHAT_CONFIG_FILE, chat_configs):
-                    bot.reply_to(message, f"✅ **Успешно!**\nНапоминания об отсутствии голосовых будут через *{new_timeout} минут* бездействия.")
+                    safe_reply(bot, message, f"✅ **Успешно!**\nНапоминания об отсутствии голосовых будут через *{new_timeout} минут* бездействия.")
                     logging.info(f"Администратор {message.from_user.id} изменил тайм-аут для чата {chat_id} на {new_timeout} мин.")
                 else:
-                    bot.reply_to(message, "❌ Не удалось сохранить настройку.")
+                    safe_reply(bot, message, "❌ Не удалось сохранить настройку.")
             except (ValueError, IndexError):
                 default_timeout = chat_configs.get(str(chat_id), {}).get('voice_timeout', VOICE_TIMEOUT_MINUTES)
-                bot.reply_to(message, f"**Неверный формат.**\n\nИспользуйте: `/time [минуты]`\n*Пример:* `/time 25`\n\nТекущее значение: *{default_timeout} минут*.")
+                safe_reply(bot, message, f"**Неверный формат.**\n\nИспользуйте: `/time [минуты]`\n*Пример:* `/time 25`\n\nТекущее значение: *{default_timeout} минут*.")
             return
         
         # Без аргументов — показываем время
@@ -284,15 +284,15 @@ def register_user_handlers(bot):
         
         if not shift or not shift.main_id:
             phrase = random.choice(soviet_phrases.get("system_messages", {}).get('shift_not_started', ["Смена в этом чате еще не началась."]))
-            return bot.reply_to(message, phrase)
+            return safe_reply(bot, message, phrase)
             
         # ИСПРАВЛЕНО: Проверяем, что пользователь участник смены (не только main)
         if user_id not in shift.users:
-            return bot.reply_to(message, "Вы не участвуете в текущей смене. Используйте /start для начала.")
+            return safe_reply(bot, message, "Вы не участвуете в текущей смене. Используйте /start для начала.")
             
         user_data = shift.users.get(user_id)
         if not user_data:
-            return bot.reply_to(message, "Не удалось найти ваши данные по текущей смене.")
+            return safe_reply(bot, message, "Не удалось найти ваши данные по текущей смене.")
 
         # Проверяем, не активна ли уже пауза
         if user_data.on_pause:
@@ -302,12 +302,12 @@ def register_user_handlers(bot):
             remaining = max(0, 40 - elapsed)
             
             if remaining > 0:
-                return bot.reply_to(message, f"⏸️ Пауза уже активна! Осталось: {int(remaining)} минут.")
+                return safe_reply(bot, message, f"⏸️ Пауза уже активна! Осталось: {int(remaining)} минут.")
             else:
                 # Пауза истекла, автоматически отключаем
                 user_data.on_pause = False
                 user_data.pause_end_time = now_moscow.isoformat()
-                bot.reply_to(message, "⏯️ Предыдущая пауза истекла. Активирую новую паузу на 40 минут...")
+                safe_reply(bot, message, "⏯️ Предыдущая пауза истекла. Активирую новую паузу на 40 минут...")
         
         # Активируем паузу
         now_moscow = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
@@ -323,7 +323,7 @@ def register_user_handlers(bot):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("⏯️ Завершить паузу досрочно", callback_data=f"stop_pause_{user_id}"))
         
-        bot.reply_to(message, 
+        safe_reply(bot, message, 
             f"⏸️ **ПАУЗА АКТИВИРОВАНА** на 40 минут!\n\n"
             f"🚫 Все счетчики остановлены\n"
             f"⏰ Пауза до: {(now_moscow + datetime.timedelta(minutes=40)).strftime('%H:%M')}\n"
@@ -339,19 +339,19 @@ def register_user_handlers(bot):
         
         if not shift or not shift.main_id:
             phrase = random.choice(soviet_phrases.get("system_messages", {}).get('shift_not_started', ["Смена в этом чате еще не началась."]))
-            return bot.reply_to(message, phrase)
+            return safe_reply(bot, message, phrase)
             
         # ИСПРАВЛЕНО: Проверяем, что пользователь участник смены
         if user_id not in shift.users:
-            return bot.reply_to(message, "Вы не участвуете в текущей смене. Используйте /start для начала.")
+            return safe_reply(bot, message, "Вы не участвуете в текущей смене. Используйте /start для начала.")
             
         user_data = shift.users.get(user_id)
         if not user_data:
-            return bot.reply_to(message, "Не удалось найти ваши данные по текущей смене.")
+            return safe_reply(bot, message, "Не удалось найти ваши данные по текущей смене.")
 
         # Проверяем, активна ли пауза
         if not user_data.on_pause:
-            return bot.reply_to(message, "❌ Пауза не активна.")
+            return safe_reply(bot, message, "❌ Пауза не активна.")
         
         # Завершаем паузу
         now_moscow = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
@@ -361,7 +361,7 @@ def register_user_handlers(bot):
         user_data.on_pause = False
         user_data.pause_end_time = now_moscow.isoformat()
         
-        bot.reply_to(message, 
+        safe_reply(bot, message, 
             f"⏯️ **ПАУЗА ЗАВЕРШЕНА** досрочно!\n\n"
             f"✅ Все счетчики возобновлены\n"
             f"📊 Длительность паузы: {int(pause_duration)} минут\n"
@@ -479,11 +479,11 @@ def register_user_handlers(bot):
         shift = chat_data.get(chat_id)
         if not shift or not shift.main_id:
             phrase = random.choice(soviet_phrases.get("system_messages", {}).get('shift_not_started', ["Смена в этом чате еще не началась."]))
-            return bot.reply_to(message, phrase)
+            return safe_reply(bot, message, phrase)
         
         # Проверяем, что команду использует текущий ведущий (любой участник смены)
         if user_id not in shift.users:
-            return bot.reply_to(message, "Вы не участвуете в текущей смене.")
+            return safe_reply(bot, message, "Вы не участвуете в текущей смене.")
         
         # Проверяем, что рабочее время смены уже закончилось
         from state import chat_configs
@@ -525,7 +525,7 @@ def register_user_handlers(bot):
                 shift_ended = current_time_only >= end_time
             
             if not shift_ended:
-                return bot.reply_to(message, 
+                return safe_reply(bot, message, 
                     f"⏳ **СМЕНА ЕЩЕ НЕ ЗАКОНЧИЛАСЬ**\n\n"
                     f"🕐 Текущее время: {now_local.strftime('%H:%M')}\n"
                     f"⏰ Время окончания смены: {end_time_str}\n"
@@ -548,7 +548,7 @@ def register_user_handlers(bot):
         count = user_data.count if user_data else 0
         pct = (count / goal * 100) if goal > 0 else 0
         
-        bot.reply_to(message, 
+        safe_reply(bot, message, 
             f"🏁 **ЗАВЕРШЕНИЕ СМЕНЫ** 🎭\n\n"
             f"📊 Твой счёт: {count}/{goal} ({pct:.0f}%)\n"
             f"{'🌟 План выполнен! Ты сегодня звезда!' if pct >= 100 else '⚠️ План не дотянул, но бывает...' if pct < 100 else ''}\n"

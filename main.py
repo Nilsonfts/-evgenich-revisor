@@ -56,7 +56,12 @@ if ":" not in BOT_TOKEN:
     logging.error("❌ Неверный формат токена бота!")
     exit(1)
 
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
+class BotExceptionHandler(telebot.ExceptionHandler):
+    def handle(self, exception):
+        logging.error(f"[BOT] Необработанное исключение в обработчике: {exception}", exc_info=exception)
+        return True  # True = polling продолжает работать
+
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown", exception_handler=BotExceptionHandler())
 
 # === Точка входа ===
 if __name__ == "__main__":

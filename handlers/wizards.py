@@ -4,7 +4,7 @@ import logging
 import datetime
 from telebot import types
 
-from utils import admin_required, save_json_data
+from utils import admin_required, save_json_data, safe_reply
 from state import user_states, chat_configs, ad_templates
 from config import TIMEZONE_MAP, CHAT_CONFIG_FILE, AD_TEMPLATES_FILE
 
@@ -416,7 +416,7 @@ def register_wizard_handlers(bot):
         
         if message.text == '/cancel':
             del user_states[user_id]
-            return bot.reply_to(message, "Добавление объявления отменено.")
+            return safe_reply(bot, message, "Добавление объявления отменено.")
         
         brand = message.text.strip().lower()
         state["ad_data"]["brand"] = brand
@@ -425,7 +425,7 @@ def register_wizard_handlers(bot):
         text = ("✅ **Шаг 2 из 4:** Введите **город** для объявления.\n"
                 "*Пример:* `moscow`")
         
-        msg = bot.reply_to(message, text, parse_mode="Markdown")
+        msg = safe_reply(bot, message, text, parse_mode="Markdown")
         bot.register_next_step_handler(msg, process_ad_city, bot)
     
     def process_ad_city(message: types.Message, bot):
@@ -437,7 +437,7 @@ def register_wizard_handlers(bot):
         
         if message.text == '/cancel':
             del user_states[user_id]
-            return bot.reply_to(message, "Добавление объявления отменено.")
+            return safe_reply(bot, message, "Добавление объявления отменено.")
         
         city = message.text.strip().lower()
         state["ad_data"]["city"] = city
@@ -454,7 +454,7 @@ def register_wizard_handlers(bot):
         
         text = ("✅ **Шаг 3 из 4:** Выберите **тип** объявления:")
         
-        bot.reply_to(message, text, parse_mode="Markdown", reply_markup=markup)
+        safe_reply(bot, message, text, parse_mode="Markdown", reply_markup=markup)
     
     def process_ad_text(message: types.Message, bot):
         """Обработка текста объявления."""
@@ -465,7 +465,7 @@ def register_wizard_handlers(bot):
         
         if message.text == '/cancel':
             del user_states[user_id]
-            return bot.reply_to(message, "Добавление объявления отменено.")
+            return safe_reply(bot, message, "Добавление объявления отменено.")
         
         ad_text = message.text.strip()
         
@@ -507,7 +507,7 @@ def register_wizard_handlers(bot):
                      f"**Автор:** {new_ad['created_by']}\n\n"
                      f"**Текст:**\n{ad_text}")
         
-        bot.reply_to(message, final_text, parse_mode="Markdown")
+        safe_reply(bot, message, final_text, parse_mode="Markdown")
         
         # Очищаем состояние
         del user_states[user_id]
@@ -598,7 +598,7 @@ def register_wizard_handlers(bot):
         
         if message.text == '/cancel':
             del user_states[user_id]
-            return bot.reply_to(message, "Редактирование отменено.")
+            return safe_reply(bot, message, "Редактирование отменено.")
         
         edit_data = state["edit_data"]
         new_text = message.text.strip()
@@ -622,14 +622,14 @@ def register_wizard_handlers(bot):
             
             category_name = AD_CATEGORIES.get(new_category, {}).get("name", "Неизвестно")
             
-            bot.reply_to(message, 
+            safe_reply(bot, message, 
                         f"✅ **Объявление обновлено!**\n\n"
                         f"**Новая категория:** {category_name}\n"
                         f"**Новый текст:**\n{new_text}", 
                         parse_mode="Markdown")
             
         except Exception as e:
-            bot.reply_to(message, f"❌ Ошибка при сохранении: {str(e)}")
+            safe_reply(bot, message, f"❌ Ошибка при сохранении: {str(e)}")
         
         # Очищаем состояние
         del user_states[user_id]
@@ -731,7 +731,7 @@ def register_wizard_handlers(bot):
         
         if message.text == '/cancel':
             del user_states[user_id]
-            return bot.reply_to(message, "Поиск отменен.")
+            return safe_reply(bot, message, "Поиск отменен.")
         
         search_query = message.text.lower()
         found_ads = []
@@ -752,7 +752,7 @@ def register_wizard_handlers(bot):
                             })
         
         if not found_ads:
-            bot.reply_to(message, f"🔍 По запросу **\"{search_query}\"** ничего не найдено.", parse_mode="Markdown")
+            safe_reply(bot, message, f"🔍 По запросу **\"{search_query}\"** ничего не найдено.", parse_mode="Markdown")
         else:
             text = f"🔍 **Результаты поиска по запросу \"{search_query}\"**\n\nНайдено: {len(found_ads)} объявлений\n\n"
             
@@ -768,7 +768,7 @@ def register_wizard_handlers(bot):
             if len(found_ads) > 10:
                 text += f"*Показаны первые 10 из {len(found_ads)} результатов*"
             
-            bot.reply_to(message, text, parse_mode="Markdown", reply_markup=markup)
+            safe_reply(bot, message, text, parse_mode="Markdown", reply_markup=markup)
         
         # Очищаем состояние
         if user_id in user_states:

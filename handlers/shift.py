@@ -8,7 +8,7 @@ import logging
 
 from telebot import types
 
-from utils import get_username, init_shift_data, init_user_data, handle_user_return, save_history_event
+from utils import get_username, init_shift_data, init_user_data, handle_user_return, save_history_event, safe_reply
 from state import chat_data, pending_transfers
 from config import BREAK_KEYWORDS, RETURN_CONFIRM_WORDS, BREAK_DELAY_MINUTES, BREAK_DURATION_MINUTES
 from phrases import soviet_phrases
@@ -97,7 +97,7 @@ def register_shift_handlers(bot):
         # Проверяем запрошенную роль
         if requested_role and requested_role not in available_roles:
             available_list = ", ".join([f"{ROLE_EMOJIS[r]} {ROLE_DESCRIPTIONS[r]}" for r in available_roles])
-            return bot.reply_to(message, 
+            return safe_reply(bot, message, 
                 f"❌ Роль '{ROLE_DESCRIPTIONS.get(requested_role, requested_role)}' недоступна сегодня.\n"
                 f"📅 Доступные роли для {current_day_type.value} дня: {available_list}")
         
@@ -161,7 +161,7 @@ def register_shift_handlers(bot):
                 main_user = shift.main_username or "неизвестный"
                 occupied_list = ", ".join([f"{ROLE_EMOJIS.get(getattr(u, 'role', 'караоке_ведущий'), '👤')} {getattr(u, 'username', 'Неизвестный')}" 
                                          for u in shift.users.values()])
-                return bot.reply_to(message, 
+                return safe_reply(bot, message, 
                     f"⚠️ Смена уже идет!\n"
                     f"🎭 Занятые роли: {occupied_list}\n"
                     f"{'💡 В выходные можно добавить второго ведущего!' if is_weekend_shift() and len(shift.users) < 2 else 'Дождитесь окончания смены или используйте /передать'}")
@@ -186,7 +186,7 @@ def register_shift_handlers(bot):
             
             if not assigned_role:
                 occupied_list = ", ".join([f"{ROLE_EMOJIS[r]} {ROLE_DESCRIPTIONS[r]}" for r in occupied_roles])
-                return bot.reply_to(message, 
+                return safe_reply(bot, message, 
                     f"❌ Все роли уже заняты.\n"
                     f"🎭 Занятые роли: {occupied_list}")
         
@@ -195,7 +195,7 @@ def register_shift_handlers(bot):
             if hasattr(user_data, 'role') and user_data.role == assigned_role:
                 role_emoji = ROLE_EMOJIS.get(assigned_role, "👤")
                 role_desc = ROLE_DESCRIPTIONS.get(assigned_role, assigned_role)
-                return bot.reply_to(message, 
+                return safe_reply(bot, message, 
                     f"❌ Роль {role_emoji} {role_desc} уже занята пользователем {user_data.username}")
         
         # Создаем или обновляем данные пользователя с ролью
@@ -255,7 +255,7 @@ def register_shift_handlers(bot):
         
         if user_data.on_break:
             phrase = random.choice(soviet_phrases.get("system_messages", {}).get('break_already_on', ["Вы уже на перерыве."]))
-            return bot.reply_to(message, phrase)
+            return safe_reply(bot, message, phrase)
             
         now_moscow = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
         
@@ -264,7 +264,7 @@ def register_shift_handlers(bot):
             if (now_moscow - last_break_time).total_seconds() / 60 < BREAK_DELAY_MINUTES:
                 remaining_time = int(BREAK_DELAY_MINUTES - (now_moscow - last_break_time).total_seconds() / 60)
                 phrase = random.choice(soviet_phrases.get("system_messages", {}).get('break_cooldown', ["Следующий перерыв можно взять через {remaining_time} мин."]))
-                return bot.reply_to(message, phrase.format(remaining_time=remaining_time))
+                return safe_reply(bot, message, phrase.format(remaining_time=remaining_time))
             
         user_data.on_break = True
         user_data.break_start_time = now_moscow.isoformat()
@@ -273,7 +273,7 @@ def register_shift_handlers(bot):
         user_data.last_break_reminder_time = None
         
         response_phrase = random.choice(soviet_phrases.get('break_acknowledgement', ['Перерыв начат.']))
-        bot.reply_to(message, f"{response_phrase} на {BREAK_DURATION_MINUTES} минут.")
+        safe_reply(bot, message, f"{response_phrase} на {BREAK_DURATION_MINUTES} минут.")
 
     @bot.message_handler(func=lambda m: m.text and any(word in m.text.lower() for word in RETURN_CONFIRM_WORDS))
     def handle_return_message(message: types.Message):
@@ -306,15 +306,15 @@ def register_shift_handlers(bot):
         shift = chat_data.get(chat_id)
         
         if not shift or from_user.id not in shift.users:
-            return bot.reply_to(message, "Только участник текущей смены может передать её.")
+            return safe_reply(bot, message, "Только участник текущей смены может передать её.")
 
         if not message.reply_to_message:
-            return bot.reply_to(message, "Чтобы передать смену, ответьте этой командой на любое сообщение пользователя, которому вы хотите ее передать.")
+            return safe_reply(bot, message, "Чтобы передать смену, ответьте этой командой на любое сообщение пользователя, которому вы хотите ее передать.")
 
         to_user = message.reply_to_message.from_user
-        if to_user.is_bot: return bot.reply_to(message, "Нельзя передать смену боту.")
-        if to_user.id == from_user.id: return bot.reply_to(message, "Нельзя передать смену самому себе.")
-        if chat_id in pending_transfers: return bot.reply_to(message, "В данный момент уже есть активное предложение о передаче смены. Дождитесь его завершения.")
+        if to_user.is_bot: return safe_reply(bot, message, "Нельзя передать смену боту.")
+        if to_user.id == from_user.id: return safe_reply(bot, message, "Нельзя передать смену самому себе.")
+        if chat_id in pending_transfers: return safe_reply(bot, message, "В данный момент уже есть активное предложение о передаче смены. Дождитесь его завершения.")
 
         from_username = get_username(from_user)
         to_username = get_username(to_user)

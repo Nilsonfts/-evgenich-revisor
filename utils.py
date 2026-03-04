@@ -16,6 +16,18 @@ from state import chat_data, user_history
 from models import UserData, ShiftData
 from database_manager import db  # Используем единый database manager
 
+def safe_reply(bot, message, text, **kwargs):
+    """Безопасный reply_to: если сообщение удалено, отправляет обычное сообщение."""
+    try:
+        return bot.reply_to(message, text, **kwargs)
+    except Exception:
+        try:
+            return bot.send_message(message.chat.id, text, **kwargs)
+        except Exception as e:
+            logging.error(f"safe_reply: не удалось отправить сообщение в чат {message.chat.id}: {e}")
+            return None
+
+
 def load_json_data(filepath, default_value=None):  # noqa: B006
     """Загружает данные из JSON файла.
 
@@ -71,7 +83,7 @@ def admin_required(bot):
         @wraps(func)
         def wrapper(message):
             if not is_admin(bot, message.from_user.id, message.chat.id):
-                return bot.reply_to(message, "⛔️ Эта команда доступна только администраторам чата.")
+                return safe_reply(bot, message, "⛔️ Эта команда доступна только администраторам чата.")
             return func(message)
         return wrapper
     return decorator
