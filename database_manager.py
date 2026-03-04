@@ -279,10 +279,22 @@ else:
                 finally:
                     session.close()
     
-    # Создаем экземпляр базы данных
-    if DB_TYPE == "postgresql":
-        db = PostgreSQLDatabase()
-    else:
-        # Fallback на SQLite
-        from database import BotDatabase
-        db = BotDatabase()
+    # Ленивая инициализация БД (не создаём при импорте, чтобы не блокировать healthcheck)
+    _db_instance = None
+
+    class _LazyDB:
+        """Прокси для ленивой инициализации базы данных."""
+        def _get_db(self):
+            global _db_instance
+            if _db_instance is None:
+                if DB_TYPE == "postgresql":
+                    _db_instance = PostgreSQLDatabase()
+                else:
+                    from database import BotDatabase
+                    _db_instance = BotDatabase()
+            return _db_instance
+
+        def __getattr__(self, name):
+            return getattr(self._get_db(), name)
+
+    db = _LazyDB()
